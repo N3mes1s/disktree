@@ -48,10 +48,18 @@ can drive (Vulkan). Distributions often package an older Rust;
 
 Download `disktree-*-aarch64-macos.zip` (`x86_64-macos` for an Intel Mac)
 from the [latest release](https://github.com/tobi/disktree/releases/latest),
-unzip it, and drag `disktree.app` into Applications. macOS 11 or newer. A
-release that was not signed and notarized is stopped by Gatekeeper the first
-time: open it once, then choose **Open Anyway** in System Settings › Privacy
-& Security.
+unzip it, and drag `disktree.app` into Applications. macOS 11 or newer.
+
+A release that was not signed and notarized is stopped by Gatekeeper: macOS
+says it "is damaged and can't be opened" or "cannot be verified". The app is
+fine; the browser marked the download as quarantined. Clear the mark once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/disktree.app
+```
+
+(Or open it once, then choose **Open Anyway** in System Settings › Privacy &
+Security.)
 
 Or build it, with Rust 1.97 or newer and Xcode or its Command Line Tools.
 macOS does not come with Rust; install it with [rustup](https://rustup.rs).
