@@ -271,7 +271,7 @@ fn selection_checkout(app: &Disktree) -> Option<std::path::PathBuf> {
         return None;
     }
     let path = app.path_at(&target)?;
-    crate::git::is_checkout(&path).then_some(path)
+    disktree_core::git::is_checkout(&path).then_some(path)
 }
 
 /// Width, in rem, below which the side panel gives the mosaic its room.
@@ -489,7 +489,10 @@ fn sibling_menu(
     let largest = rows.first().map_or(1, |row| row.value.max(1));
     let parent_name = app.node_at(parent).map_or_else(String::new, |node| {
         if parent.is_empty() {
-            crate::marks::display_path(&app.root_path, app.home.as_deref())
+            disktree_core::marks::display_path(
+                &app.root_path,
+                app.home.as_deref(),
+            )
         } else {
             node.name.to_string()
         }
@@ -1072,7 +1075,10 @@ fn selection_section(
                 .overflow_hidden()
                 .text_ellipsis()
                 .child(path.as_deref().map_or_else(String::new, |path| {
-                    crate::marks::display_path(path, app.home.as_deref())
+                    disktree_core::marks::display_path(
+                        path,
+                        app.home.as_deref(),
+                    )
                 })),
         );
 
@@ -1096,7 +1102,7 @@ fn selection_section(
 
     let fourth = if node.is_dir()
         && let Some(path) = &path
-        && crate::git::is_checkout(path)
+        && disktree_core::git::is_checkout(path)
     {
         let value = match app.git.get(path) {
             Some(Some(state)) => state.summary(),
@@ -1452,7 +1458,7 @@ fn marked_section(
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .child(crate::marks::display_path(
+                        .child(disktree_core::marks::display_path(
                             &item.path,
                             app.home.as_deref(),
                         )),
@@ -2120,7 +2126,8 @@ fn mark_row(
     cx: &Context<'_, Disktree>,
 ) -> Div {
     let root_value = app.tree().map_or(0, |tree| tree.bytes);
-    let path_text = crate::marks::display_path(&item.path, app.home.as_deref());
+    let path_text =
+        disktree_core::marks::display_path(&item.path, app.home.as_deref());
     let color = if blocked.is_some() || covered {
         theme.secondary
     } else {
@@ -2903,7 +2910,10 @@ fn node_card(
                 .text_size(text::CAPTION)
                 .text_color(theme.secondary)
                 .child(path.as_deref().map_or_else(String::new, |path| {
-                    crate::marks::display_path(path, app.home.as_deref())
+                    disktree_core::marks::display_path(
+                        path,
+                        app.home.as_deref(),
+                    )
                 })),
         )
         .child(

@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use disktree_core::removal::Target;
-use disktree_core::tree::{Metric, Node};
+use crate::removal::Target;
+use crate::tree::{Metric, Node};
 use rustc_hash::FxHashSet;
 
 /// Marked paths, in the order they were marked.
@@ -124,7 +124,7 @@ pub fn display_path(path: &Path, home: Option<&Path>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use disktree_core::tree::{NodeKind, aggregate};
+    use crate::tree::{NodeKind, aggregate};
 
     fn file(name: &str, bytes: u64) -> Node {
         Node::entry(name, NodeKind::File, bytes)
