@@ -67,13 +67,15 @@ function paintMosaic(answer) {
 async function poll() {
   const [w, h] = mosaicSize();
   const ticket = ++sequence;
+  /* Every exit reschedules: a poll superseded by pointer traffic (204s bump
+   * the sequence) that didn't would stop the meter and the progress forever. */
   try {
     const response = await fetch(
       "/api/frame" + suffix + (suffix ? "&" : "?") + "w=" + w + "&h=" + h);
-    if (!response.ok) return;
-    const frame = await response.json();
-    if (ticket !== sequence) return;
-    apply(frame);
+    if (response.ok) {
+      const frame = await response.json();
+      if (ticket === sequence) apply(frame);
+    }
   } catch (_) {
     /* The server went away; the next tick tries again. */
   }
@@ -485,21 +487,21 @@ document.addEventListener("input", (event) => {
   findTimer = setTimeout(() => send([{ type: "find", text }]), 60);
 });
 
-document.addEventListener("focusin", (event) => {
-  if (event.target && event.target.id === "find-input") {
-    send([{ type: "find_focus", open: true }]);
+/* Focus is client-side chrome: the server opens the field on "/" and
+ * closes it on enter/esc, and never hears about focus at all — a focus
+ * round trip per frame loops forever against the swaps. Clicking the
+ * mosaic hands the keyboard back to the app. */
+document.addEventListener("mousedown", (event) => {
+  if (event.target.closest && event.target.closest("#mosaic-wrap")
+    && document.activeElement && document.activeElement.id === "find-input") {
+    document.activeElement.blur();
   }
-});
-
-document.addEventListener("focusout", (event) => {
-  if (event.target && event.target.id === "find-input") {
-    send([{ type: "find_focus", open: false }]);
-  }
-});
+}, true);
 
 /* ── the panel's drag handle ────────────────────────────────────────── */
 
 let dragging = false;
+let dragThrottle = false;
 document.addEventListener("mousedown", (event) => {
   if (event.target && event.target.id === "panel-handle") {
     dragging = true;
@@ -514,9 +516,9 @@ document.addEventListener("mousedown", (event) => {
 document.addEventListener("mousemove", (event) => {
   if (!dragging) return;
   const px = window.innerWidth - event.clientX;
-  if (!dragging.throttle) {
-    dragging.throttle = true;
-    setTimeout(() => { dragging && (dragging.throttle = false); }, 50);
+  if (!dragThrottle) {
+    dragThrottle = true;
+    setTimeout(() => { dragThrottle = false; }, 50);
     send([{ type: "panel", px: Math.round(px) }]);
   }
 });

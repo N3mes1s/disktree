@@ -85,6 +85,24 @@ fn ev(json: &serde_json::Value) -> String {
     format!("data-ev=\"{}\"", esc(&json.to_string()))
 }
 
+/// A path for a `data-ev` attribute: its OS bytes, percent-encoded. Names
+/// are not necessarily UTF-8 on Unix, and `serde_json`'s answer to a
+/// non-UTF-8 `PathBuf` is to panic inside the request handler. Decoded by
+/// `server::decode_path` — the codec is owned by this crate on both ends.
+pub fn path_attr(path: &Path) -> String {
+    let mut out = String::new();
+    for &byte in path.as_os_str().as_encoded_bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/')
+        {
+            out.push(char::from(byte));
+        } else {
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
 fn crumbs_json(crumbs: &[usize]) -> serde_json::Value {
     serde_json::Value::from(
         crumbs
@@ -246,7 +264,9 @@ fn trail(app: &Web) -> String {
                     "<span class=\"crumb above{}\" {} \
                      title=\"Scan from here · what is below is reused\">{}</span>",
                     if pending { " pending" } else { "" },
-                    ev(&serde_json::json!({"type": "widen", "path": path})),
+                    ev(
+                        &serde_json::json!({"type": "widen", "path": path_attr(&path)})
+                    ),
                     esc(&label),
                 );
             }
@@ -664,7 +684,7 @@ fn selection_section(app: &Web) -> String {
         };
         let event = match ancestor.as_deref().filter(|_| !marked) {
             Some(ancestor) => {
-                serde_json::json!({"type": "unmark", "path": ancestor})
+                serde_json::json!({"type": "unmark", "path": path_attr(ancestor)})
             }
             None => serde_json::json!({"type": "mark", "crumbs": target}),
         };
@@ -827,7 +847,9 @@ fn marked_section(app: &Web) -> String {
                 app.home.as_deref()
             )),
             human_bytes(item.bytes),
-            ev(&serde_json::json!({"type": "unmark", "path": item.path})),
+            ev(
+                &serde_json::json!({"type": "unmark", "path": path_attr(&item.path)})
+            ),
         );
     }
     if count > MARKED_ROWS {
@@ -961,11 +983,16 @@ fn key_bar(app: &Web) -> String {
             "<span class=\"hint\"><span class=\"keycap\">{keys}</span> {label}</span>",
         );
     }
-    let zoom = if (app.view.scale - 1.0).abs() > 0.01 {
-        format!("<span class=\"caption dim\">{:.1}×</span>", app.view.scale)
-    } else {
-        String::new()
-    };
+    // Always emitted, empty at 1×, so mosaic-only answers can update it in
+    // place without touching the bar around it.
+    let zoom = format!(
+        "<span id=\"zoom-level\" class=\"caption dim\">{}</span>",
+        if (app.view.scale - 1.0).abs() > 0.01 {
+            format!("{:.1}×", app.view.scale)
+        } else {
+            String::new()
+        },
+    );
     let scan = if app.scan.is_some() {
         format!(
             "scanning · {} entries · {}",
@@ -1137,7 +1164,9 @@ fn mark_row(
         esc(&path_text),
         share_bar(item.bytes, root_value.max(1), 8),
         human_bytes(item.bytes),
-        ev(&serde_json::json!({"type": "unmark", "path": item.path})),
+        ev(
+            &serde_json::json!({"type": "unmark", "path": path_attr(&item.path)})
+        ),
     )
 }
 

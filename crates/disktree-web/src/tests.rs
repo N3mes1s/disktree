@@ -346,7 +346,7 @@ fn serve_test(app: Web, token: Option<&str>) -> std::net::SocketAddr {
         panic!("an IP listen address");
     };
     let app = Arc::new(Mutex::new(app));
-    let token = token.map(str::to_string);
+    let token = token.map(|raw| Arc::new(crate::server::Token::new(raw)));
     std::thread::spawn(move || {
         loop {
             let Ok(request) = server.recv() else {
@@ -576,6 +576,62 @@ fn frames_come_gzipped_when_accepted() {
         .read_to_string(&mut decoded)
         .expect("valid gzip");
     assert!(decoded.contains("\"html\""), "{decoded:.120}");
+}
+
+#[test]
+fn a_garbage_removal_mode_never_arms_permanent_deletion() {
+    let fix = fixture();
+    let addr = serve_test(app_of(&fix), None);
+    let batch = concat!(
+        "{\"w\":1200,\"h\":700,\"events\":[",
+        "{\"type\":\"mark\",\"crumbs\":[0]},",
+        "{\"type\":\"key\",\"key\":\"c\"},",
+        "{\"type\":\"removal\",\"mode\":\"delete_everything_forever\"}",
+        "]}"
+    );
+    let (status, body) = http(addr, "POST", "/api/input", Some(batch));
+    assert_eq!(status, 200);
+    assert!(
+        body.contains("Move to trash"),
+        "an unknown mode keeps the recoverable one: {body:.200}",
+    );
+    assert!(!body.contains("btn danger\""), "no armed danger button");
+}
+
+/// A name that is not UTF-8: ordinary on Unix, and it must not wedge the
+/// renderer — every frame while it is marked carries its path in `data-ev`.
+#[cfg(unix)]
+#[test]
+fn non_utf8_names_survive_marking_and_unmarking() {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let odd = root.join(std::ffi::OsStr::from_bytes(b"odd\xffname.bin"));
+    std::fs::write(&odd, b"odd").unwrap();
+    let tree = scan(&root, ScanOptions::default()).unwrap();
+    let mut app = Web::with_tree(root, tree, ScanOptions::default(), 3);
+    app.mosaic_size = (1200.0, 700.0);
+
+    // Mark it (largest = only child) and render the review screen: the
+    // mark row's Unmark button carries the path.
+    app.on_key("space", false, false);
+    assert_eq!(app.marks.len(), 1);
+    app.on_key("c", false, false);
+    let frame = render::frame(&mut app);
+    assert!(frame.html.contains("odd"), "the row renders");
+
+    // Round-trip the exact bytes through the codec the wire uses.
+    let encoded = render::path_attr(&odd);
+    assert!(encoded.contains("%FF"), "{encoded}");
+    let body = format!(
+        "{{\"w\":1200,\"h\":700,\"events\":[{{\"type\":\"unmark\",\"path\":\"{encoded}\"}}]}}"
+    );
+    let decoded: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let events = decoded["events"].as_array().unwrap();
+    let coded = events[0]["path"].as_str().unwrap();
+    let path = crate::server::decode_path(coded).expect("decodes");
+    assert_eq!(path, odd, "byte-exact round trip");
 }
 
 #[test]

@@ -9,6 +9,7 @@
 use std::io::Read as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -79,9 +80,10 @@ enum Event {
     Goto {
         crumbs: Vec<usize>,
     },
-    /// Breadcrumb above the root: widen the scan to there.
+    /// Breadcrumb above the root: widen the scan to there. The path is
+    /// percent-encoded OS bytes: JSON is UTF-8, Unix filenames are not.
     Widen {
-        path: PathBuf,
+        path: String,
     },
     /// Open (or close) a crumb's sibling menu, anchored at the crumb.
     Menu {
@@ -104,8 +106,9 @@ enum Event {
     Mark {
         crumbs: Vec<usize>,
     },
+    /// Percent-encoded too, like [`Event::Widen`].
     Unmark {
-        path: PathBuf,
+        path: String,
     },
     /// The Size | Files | Age segmented control.
     Mode {
@@ -138,6 +141,11 @@ struct Input {
     events: Vec<Event>,
 }
 
+/// At most this many requests are in flight at once; beyond it a connection
+/// is dropped unread. A browser needs a handful at a time, and an unbounded
+/// thread per connection is a resource-exhaustion hole.
+const MAX_INFLIGHT: usize = 128;
+
 /// Serve the application until the process ends.
 pub fn serve(app: Web, listen: SocketAddr, token: Option<&str>) -> ! {
     let server = match Server::http(listen) {
@@ -148,16 +156,38 @@ pub fn serve(app: Web, listen: SocketAddr, token: Option<&str>) -> ! {
         }
     };
     let app = Arc::new(Mutex::new(app));
+    let token = token.map(|raw| Arc::new(Token::new(raw)));
+    let inflight = Arc::new(AtomicUsize::new(0));
     loop {
         let Ok(request) = server.recv() else {
             continue;
         };
+        if inflight.load(Ordering::Relaxed) >= MAX_INFLIGHT {
+            continue;
+        }
         let app = Arc::clone(&app);
-        let token = token.map(str::to_owned);
+        let token = token.clone();
+        let inflight = Arc::clone(&inflight);
         std::thread::spawn(move || {
-            let response = handle(request, &app, token.as_deref());
-            let _ = response;
+            let _permit = Permit::new(inflight);
+            let _ = handle(request, &app, token.as_deref());
         });
+    }
+}
+
+/// Counts a handler thread while it lives.
+struct Permit(Arc<AtomicUsize>);
+
+impl Permit {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self(counter)
+    }
+}
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -166,26 +196,31 @@ pub fn serve(app: Web, listen: SocketAddr, token: Option<&str>) -> ! {
 pub fn handle(
     mut request: Request,
     app: &Arc<Mutex<Web>>,
-    token: Option<&str>,
+    token: Option<&Token>,
 ) -> std::io::Result<()> {
     // Static assets are exempt: they are constant and carry no filesystem
-    // data, and a <script>/<link> tag cannot send the token. Everything that
-    // can read or change the disk — frames and input — stays gated.
+    // data, and a <script>/<link> tag cannot send the token. The match is
+    // exact — never a prefix — so no path construction can widen it.
+    // Everything that can read or change the disk stays gated.
     let method = request.method().clone();
     let path = request.url().split('?').next().unwrap_or("/").to_string();
+    let is_asset =
+        matches!(path.as_str(), "/static/app.js" | "/static/style.css");
     if let Some(token) = token
-        && !path.starts_with("/static/")
+        && !is_asset
         && !authorized(&request, token)
     {
         return request.respond(unauthorized());
     }
     match (method, path.as_str()) {
         (Method::Get, "/") => {
+            // The shell is constant; revalidate so a redeploy shows.
             let response = body_response(
                 &request,
                 INDEX.as_bytes().to_vec(),
                 "text/html; charset=utf-8",
                 StatusCode(200),
+                "no-cache",
             );
             request.respond(response)
         }
@@ -195,6 +230,7 @@ pub fn handle(
                 APP_JS.as_bytes().to_vec(),
                 "application/javascript",
                 StatusCode(200),
+                "no-cache",
             );
             request.respond(response)
         }
@@ -204,6 +240,7 @@ pub fn handle(
                 STYLE_CSS.as_bytes().to_vec(),
                 "text/css",
                 StatusCode(200),
+                "no-cache",
             );
             request.respond(response)
         }
@@ -260,7 +297,7 @@ fn render_with(
         Ok(app) => app,
         Err(poison) => poison.into_inner(),
     };
-    if w >= 1.0 && h >= 1.0 {
+    if w >= 1.0 && h >= 1.0 && w.is_finite() && h.is_finite() {
         app.mosaic_size = (w, h);
     } else if app.mosaic_size.0 < 1.0 {
         // The shim's first call happens before the mosaic container exists,
@@ -326,19 +363,35 @@ fn apply(app: &mut Web, event: Event) {
             ctrl,
             count,
         } => {
+            // Left and Middle only, as the desktop: a right-click on the
+            // mosaic does nothing (its menu is suppressed, so silently
+            // treating it as a left click would surprise twice).
             let button = match button {
+                0 => MouseButton::Left,
                 1 => MouseButton::Middle,
-                _ => MouseButton::Left,
+                _ => return,
             };
             app.on_mouse_down(button, x, y, ctrl, count);
         }
         Event::Wheel { x, y, lines, shift } => {
-            app.on_scroll_wheel(x, y, lines, shift);
+            if [x, y, lines].iter().all(|v| v.is_finite()) {
+                app.on_scroll_wheel(x, y, lines, shift);
+            }
         }
-        Event::Zoom { x, y, factor } => app.zoom_at(x, y, factor, true),
-        Event::Pan { dx, dy } => app.pan_by(dx, dy),
+        Event::Zoom { x, y, factor } => {
+            // JSON cannot say NaN, but `1e999` parses to infinity; the
+            // clamps contain infinities, and nothing here may rely on that.
+            if [x, y, factor].iter().all(|v| v.is_finite()) {
+                app.zoom_at(x, y, factor, true);
+            }
+        }
+        Event::Pan { dx, dy } => {
+            if dx.is_finite() && dy.is_finite() {
+                app.pan_by(dx, dy);
+            }
+        }
         Event::Size { w, h } => {
-            if w >= 1.0 && h >= 1.0 {
+            if w >= 1.0 && h >= 1.0 && w.is_finite() && h.is_finite() {
                 app.mosaic_size = (w, h);
             }
         }
@@ -351,7 +404,11 @@ fn apply(app: &mut Web, event: Event) {
             app.panel_px = px.clamp(crate::app::PANEL_MIN_PX, max);
         }
         Event::Goto { crumbs } => app.go_to(crumbs),
-        Event::Widen { path } => app.widen_to(path),
+        Event::Widen { path } => {
+            if let Some(path) = decode_path(&path) {
+                app.widen_to(path);
+            }
+        }
         Event::Menu { crumbs, x, y } => {
             let open = app.crumb_menu.as_ref().is_some_and(|menu| {
                 menu.parent == crumbs[..crumbs.len().saturating_sub(1)]
@@ -365,12 +422,18 @@ fn apply(app: &mut Web, event: Event) {
         Event::Sibling { parent, index } => app.choose_sibling(&parent, index),
         Event::Reveal { crumbs } => app.reveal(crumbs),
         Event::Mark { crumbs } => app.toggle_mark(&crumbs),
-        Event::Unmark { path } => app.unmark(&path),
+        Event::Unmark { path } => {
+            if let Some(path) = decode_path(&path) {
+                app.unmark(&path);
+            }
+        }
         Event::Mode { index } => app.set_mode(index),
         Event::Removal { mode } => {
+            // Only the exact word arms the irreversible mode; anything else,
+            // including garbage, lands on the recoverable one.
             app.removal_mode = match mode.as_str() {
-                "trash" => disktree_core::removal::RemovalMode::Trash,
-                _ => disktree_core::removal::RemovalMode::Permanent,
+                "permanent" => disktree_core::removal::RemovalMode::Permanent,
+                _ => disktree_core::removal::RemovalMode::Trash,
             };
         }
         Event::Commit => app.commit(),
@@ -387,11 +450,11 @@ fn apply(app: &mut Web, event: Event) {
 
 /// The shared secret, checked when one is configured: `?token=` on the URL,
 /// or an `Authorization: Bearer` header.
-fn authorized(request: &Request, token: &str) -> bool {
+fn authorized(request: &Request, token: &Token) -> bool {
     if let Some((_, query)) = request.url().split_once('?') {
         for pair in query.split('&') {
             if let Some(value) = pair.strip_prefix("token=")
-                && value == token
+                && token_eq(value, &token.raw)
             {
                 return true;
             }
@@ -399,8 +462,69 @@ fn authorized(request: &Request, token: &str) -> bool {
     }
     request.headers().iter().any(|header| {
         header.field.equiv("authorization")
-            && header.value.as_str() == format!("Bearer {token}")
+            && token_eq(header.value.as_str(), &token.bearer)
     })
+}
+
+/// The secret, with its Bearer form precomputed once.
+pub struct Token {
+    raw: String,
+    bearer: String,
+}
+
+impl Token {
+    pub fn new(raw: &str) -> Self {
+        Self {
+            raw: raw.to_string(),
+            bearer: format!("Bearer {raw}"),
+        }
+    }
+}
+
+/// Compare in time independent of where they differ: a shared secret must
+/// not be readable byte by byte off the response latency.
+fn token_eq(given: &str, expected: &str) -> bool {
+    let (a, b) = (given.as_bytes(), expected.as_bytes());
+    let mut diff = (a.len() != b.len()) as u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// A path back out of a `data-ev` attribute: percent-decoded OS bytes, the
+/// inverse of `render::path_attr`. `None` for malformed input; the event is
+/// then dropped, never guessed at.
+pub fn decode_path(text: &str) -> Option<PathBuf> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            let hex = |i: usize| -> Option<u8> {
+                bytes
+                    .get(i)
+                    .and_then(|b| char::from(*b).to_digit(16))
+                    .map(|d| d as u8)
+            };
+            out.push((hex(at + 1)? << 4) | hex(at + 2)?);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(&out)))
+    }
+    // The app is a Linux tool head to toe; on anything else, only UTF-8
+    // paths round-trip (no unchecked OS-string construction here).
+    #[cfg(not(unix))]
+    {
+        String::from_utf8(out).ok().map(PathBuf::from)
+    }
 }
 
 /// `w`/`h` out of a query string.
@@ -420,25 +544,29 @@ const INDEX: &str = include_str!("../assets/index.html");
 const APP_JS: &str = include_str!("../assets/app.js");
 const STYLE_CSS: &str = include_str!("../assets/style.css");
 
-fn base_headers() -> Vec<Header> {
+fn base_headers(cache: &'static str) -> Vec<Header> {
     // The UI is one page of self-contained assets; nothing from elsewhere
-    // may load, and nothing here may be framed or sniffed into another type.
+    // may load, nothing here may be framed or sniffed into another type,
+    // and no referrer — the URL can carry the token — leaves the page.
+    // img-src data: is the inline SVG favicon in index.html; nothing else
+    // loads images at all.
     let security = "default-src 'self'; style-src 'self' 'unsafe-inline'; \
-                    script-src 'self'; img-src 'self'; frame-ancestors 'none'";
+                    script-src 'self'; img-src 'self' data:; \
+                    frame-ancestors 'none'";
     vec![
         Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap(),
         Header::from_bytes("Content-Security-Policy", security).unwrap(),
-        // Everything is compiled into the binary, so a new deploy is a new
-        // page; phones must not keep the old shim or stylesheet.
-        Header::from_bytes("Cache-Control", "no-cache").unwrap(),
+        Header::from_bytes("Referrer-Policy", "no-referrer").unwrap(),
+        Header::from_bytes("Cache-Control", cache).unwrap(),
     ]
 }
 
 fn with_headers(
     mut response: Response<std::io::Cursor<Vec<u8>>>,
     content_type: &str,
+    cache: &'static str,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
-    for header in base_headers() {
+    for header in base_headers(cache) {
         response.add_header(header);
     }
     response
@@ -452,6 +580,7 @@ fn respond(request: Request, answer: Answer) -> std::io::Result<()> {
             Response::from_string(String::new())
                 .with_status_code(StatusCode(204)),
             "text/plain",
+            "no-store",
         )),
         Answer::Mosaic { mosaic, zoom } => {
             let body = serde_json::json!({ "mosaic": mosaic, "zoom": zoom })
@@ -461,6 +590,7 @@ fn respond(request: Request, answer: Answer) -> std::io::Result<()> {
                 body.into_bytes(),
                 "application/json",
                 StatusCode(200),
+                "no-store",
             );
             request.respond(response)
         }
@@ -473,6 +603,7 @@ fn respond(request: Request, answer: Answer) -> std::io::Result<()> {
                 body.into_bytes(),
                 "application/json",
                 StatusCode(200),
+                "no-store",
             );
             request.respond(response)
         }
@@ -487,6 +618,7 @@ fn body_response(
     body: Vec<u8>,
     content_type: &str,
     status: StatusCode,
+    cache: &'static str,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
     let accepts_gzip = request.headers().iter().any(|header| {
         header.field.equiv("accept-encoding")
@@ -507,6 +639,7 @@ fn body_response(
     let mut response = with_headers(
         Response::from_data(body).with_status_code(status),
         content_type,
+        cache,
     );
     if gzipped {
         response.add_header(
@@ -526,6 +659,7 @@ fn unauthorized() -> Response<std::io::Cursor<Vec<u8>>> {
         )
         .with_status_code(StatusCode(401)),
         "text/plain",
+        "no-store",
     )
 }
 
@@ -534,6 +668,7 @@ fn bad_request() -> Response<std::io::Cursor<Vec<u8>>> {
         Response::from_string("disktree-web: unreadable input")
             .with_status_code(StatusCode(400)),
         "text/plain",
+        "no-store",
     )
 }
 
@@ -542,5 +677,6 @@ fn not_found() -> Response<std::io::Cursor<Vec<u8>>> {
         Response::from_string("disktree-web: not found")
             .with_status_code(StatusCode(404)),
         "text/plain",
+        "no-store",
     )
 }

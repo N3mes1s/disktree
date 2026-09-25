@@ -4,6 +4,9 @@
 #   docker build -f packaging/Dockerfile.web -t disktree-web .
 #   docker run -d -p 127.0.0.1:8737:8737 disktree-web
 #
+# The entrypoint mints a random token and prints the URL to the logs unless
+# DISKTREE_TOKEN is set; DISKTREE_TOKEN=none opts out for loopback demos.
+#
 # It scans the container's own root: real directories to walk, and nothing
 # personal. The removal guards refuse the system trees; /data is seeded junk
 # meant to be marked and deleted.
@@ -30,8 +33,16 @@ RUN mkdir -p /data/.cache/builds /data/project/target /data/project/.git \
  && dd if=/dev/urandom of=/data/photos/img_0001.raw bs=1M count=7 \
  && dd if=/dev/urandom of=/data/photos/img_0002.raw bs=1M count=6
 
+# A plain user, not root: a removal tool has no business as uid 0, even in a
+# sandbox. /data is its home, so the seeded junk stays deletable and the XDG
+# trash lands there too.
+RUN useradd --system --uid 1000 --home-dir /data dt \
+ && chown -R dt:dt /data
+COPY packaging/docker-web-entrypoint.sh /usr/local/bin/docker-web-entrypoint.sh
+USER dt
+
 EXPOSE 8737
-# Scans the container's own root by default; override the path (or pass
-# --token) at run time: docker run ... disktree-web /data --token s3cret
-ENTRYPOINT ["disktree-web", "--listen", "0.0.0.0:8737"]
+# Scans the container's own root by default; override the path at run time:
+# docker run ... disktree-web /data
+ENTRYPOINT ["docker-web-entrypoint.sh"]
 CMD ["/"]
