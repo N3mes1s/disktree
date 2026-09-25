@@ -23,6 +23,7 @@ UNAME := $(shell uname -s)
 MANIFEST = Cargo.toml
 CARGO ?= cargo
 TARGET = target/release/disktree
+TARGET_WEB = target/release/disktree-web
 ICON = assets/disktree.svg
 DESKTOP = packaging/disktree.desktop.in
 
@@ -33,6 +34,8 @@ help:
 	@echo
 	@echo "  make build       release build"
 	@echo "  make run         build and run, scanning $$HOME"
+	@echo "  make run-web     build and serve $$HOME at http://127.0.0.1:8737"
+	@echo "  make docker-web  build the disktree-web container image"
 	@echo "  make install     install to $(PREFIX): binary, desktop entry, icon"
 	@echo "                   (macOS: disktree.app into $(APPS))"
 	@echo "  make bundle      macOS: build target/bundle/disktree.app and its zip"
@@ -51,6 +54,12 @@ build:
 
 run: build
 	$(TARGET)
+
+run-web: build
+	$(TARGET_WEB)
+
+docker-web:
+	docker build -f packaging/Dockerfile.web -t disktree-web .
 
 lint:
 	$(CARGO) xtask lint
@@ -87,6 +96,7 @@ else
 install: build
 	install -d $(BINDIR) $(APPDIR) $(ICONDIR)
 	install -m755 $(TARGET) $(BINDIR)/disktree
+	install -m755 $(TARGET_WEB) $(BINDIR)/disktree-web
 	install -m644 $(ICON) $(ICONDIR)/disktree.svg
 	VERSION=$$(sed -n 's/^version = "\(.*\)"/\1/p' $(MANIFEST) | head -1) && \
 	sed -e 's|@BINDIR@|$(BINDIR)|' -e "s|@VERSION@|$$VERSION|" \
@@ -98,6 +108,7 @@ install: build
 	@echo
 	@echo "installed:"
 	@echo "  $(BINDIR)/disktree"
+	@echo "  $(BINDIR)/disktree-web"
 	@echo "  $(APPDIR)/disktree.desktop"
 	@echo "  $(ICONDIR)/disktree.svg"
 	@if command -v desktop-file-validate >/dev/null 2>&1; then \
@@ -107,7 +118,8 @@ install: build
 	    echo; echo "note: $(BINDIR) is not on PATH in this shell";; esac
 
 uninstall:
-	rm -f $(BINDIR)/disktree $(APPDIR)/disktree.desktop $(ICONDIR)/disktree.svg
+	rm -f $(BINDIR)/disktree $(BINDIR)/disktree-web \
+		$(APPDIR)/disktree.desktop $(ICONDIR)/disktree.svg
 	@if command -v update-desktop-database >/dev/null 2>&1; then \
 	    update-desktop-database $(APPDIR) 2>/dev/null || true; \
 	fi

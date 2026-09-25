@@ -91,7 +91,7 @@ jobs:
         run: cargo xtask test
 
       - name: Build
-        run: cargo build --release --locked -p disktree-app
+        run: cargo build --release --locked -p disktree-app -p disktree-web
 
       - name: Package
         id: package
@@ -101,8 +101,8 @@ jobs:
         run: |
           name="disktree-$VERSION-$ARCH-linux"
           mkdir -p "dist/$name"
-          cp target/release/disktree "dist/$name/"
-          strip "dist/$name/disktree"
+          cp target/release/disktree target/release/disktree-web "dist/$name/"
+          strip "dist/$name/disktree" "dist/$name/disktree-web"
           cp packaging/install.sh packaging/disktree.desktop.in \
              assets/disktree.svg README.md LICENSE "dist/$name/"
           echo "$VERSION" > "dist/$name/VERSION"

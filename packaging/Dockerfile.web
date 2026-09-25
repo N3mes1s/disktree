@@ -1,0 +1,37 @@
+# disktree-web in a throwaway container: a Linux machine with nothing to leak.
+# The build context is the repository root:
+#
+#   docker build -f packaging/Dockerfile.web -t disktree-web .
+#   docker run -d -p 127.0.0.1:8737:8737 disktree-web
+#
+# It scans the container's own root: real directories to walk, and nothing
+# personal. The removal guards refuse the system trees; /data is seeded junk
+# meant to be marked and deleted.
+
+FROM rust:1-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY xtask xtask
+COPY crates crates
+RUN cargo build --release --locked -p disktree-web
+
+FROM debian:bookworm-slim
+COPY --from=build /src/target/release/disktree-web /usr/local/bin/disktree-web
+
+# Seeded clutter under /data, so the treemap has something to show and lose.
+# Real files, not sparse ones: the scanner measures allocated blocks.
+RUN mkdir -p /data/.cache/builds /data/project/target /data/project/.git \
+      /data/downloads /data/photos \
+ && dd if=/dev/urandom of=/data/.cache/builds/cache.bin bs=1M count=18 \
+ && dd if=/dev/urandom of=/data/project/target/build.bin bs=1M count=24 \
+ && dd if=/dev/urandom of=/data/project/.git/objects.bin bs=1M count=4 \
+ && dd if=/dev/urandom of=/data/project/main.rs bs=1K count=300 \
+ && dd if=/dev/urandom of=/data/downloads/archive.tar.gz bs=1M count=9 \
+ && dd if=/dev/urandom of=/data/photos/img_0001.raw bs=1M count=7 \
+ && dd if=/dev/urandom of=/data/photos/img_0002.raw bs=1M count=6
+
+EXPOSE 8737
+# Scans the container's own root by default; override the path (or pass
+# --token) at run time: docker run ... disktree-web /data --token s3cret
+ENTRYPOINT ["disktree-web", "--listen", "0.0.0.0:8737"]
+CMD ["/"]

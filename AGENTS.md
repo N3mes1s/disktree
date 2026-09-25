@@ -15,6 +15,7 @@ the removal mode, the confirmation). Marking is never destructive.
 ```sh
 make build                      # release build
 make run                        # build and run, scanning $HOME
+make run-web                    # build and serve $HOME at http://127.0.0.1:8737
 make install                    # ~/.local: binary, desktop entry, icon
 make install PREFIX=/usr/local  # system-wide (needs root)
 make uninstall
@@ -99,7 +100,10 @@ and `cargo build --release` directly; CI runs the gate on both systems.
 | anything that deletes, or refuses to | `crates/disktree-core/src/removal.rs` |
 | free space and projections | `crates/disktree-core/src/space.rs` |
 | what Windows lists, measures and compares differently | `crates/disktree-core/src/windows.rs` — the only `unsafe` |
-| a key, a screen transition, a mark | `crates/disktree-app/src/state.rs` |
+| a key, a screen transition, a mark | `crates/disktree-app/src/state.rs` (desktop) and `crates/disktree-web/src/app.rs` (web) — keep them in lockstep |
+| the web frame's HTML or SVG | `crates/disktree-web/src/render.rs`, `mosaic.rs` |
+| the web server's routes or token gate | `crates/disktree-web/src/server.rs` |
+| browser-side input forwarding | `crates/disktree-web/assets/app.js` — no state there by design |
 | spacing, type and size | `crates/disktree-app/src/ui.rs` — tokens only, no `px` in layout |
 | the mosaic's painting or labels | `crates/disktree-app/src/treemap_view.rs` |
 | layout of a screen | `crates/disktree-app/src/views.rs` |
@@ -112,6 +116,11 @@ and `cargo build --release` directly; CI runs the gate on both systems.
   against real temporary trees.
 * The screens are covered by window-harness tests that draw frames and press
   keys, including one that marks a directory, confirms the removal and checks
-  the files are gone while unmarked neighbours are untouched.
+  the files are gone while unmarked neighbours are untouched. The web front
+  end repeats that promise over a real socket: mark, commit, confirm, and the
+  files are gone from the temporary tree.
+* The web server exposes frames and input only — there is no read/write file
+  API, and removal goes through the same `removal.rs` guards. It binds to
+  localhost by default; a wider bind without `--token` must keep warning.
 * Rendering was verified by those tests and by running the app against a real
   home directory; it has not been eyeballed in every theme and font size.
