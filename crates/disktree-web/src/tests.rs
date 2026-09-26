@@ -5,14 +5,16 @@
 //! their neighbours are untouched.
 
 use std::io::{Read as _, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use disktree_core::scan::{ScanOptions, scan};
 use disktree_core::tree::Node;
 
-use crate::app::{Screen, View, Web};
+#[cfg(not(target_os = "macos"))]
+use crate::app::Screen;
+use crate::app::{View, Web};
 use crate::render;
 
 /// A tree on disk: `junk/` is the biggest, then `standalone.bin`, then
@@ -57,7 +59,9 @@ fn app_of(fix: &Fixture) -> Web {
 }
 
 /// Pump until nothing runs anymore, or the fixture's small tree has had
-/// more than enough time.
+/// more than enough time. Only the removal flows pump, and macOS does not
+/// run them (tempdirs sit under the guarded /private tree).
+#[cfg(not(target_os = "macos"))]
 fn settle(app: &mut Web) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -737,5 +741,7 @@ fn the_fixture_orders_junk_first() {
     assert_eq!(&*tree.children[0].name, "junk");
     assert_eq!(&*tree.children[1].name, "standalone.bin");
     assert_eq!(&*tree.children[2].name, "keep");
-    assert!(Path::new(&fix.junk).exists());
+    assert!(fix.junk.exists());
+    assert!(fix.keep.exists());
+    assert!(fix.standalone.exists());
 }
