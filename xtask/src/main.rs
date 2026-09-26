@@ -18,7 +18,7 @@ tasks:
   fmt       rustfmt --check over the workspace
   fmt-fix   rustfmt in place
   clippy    clippy --workspace --all-targets -- -D warnings
-  test      cargo test --workspace
+  test      cargo test --workspace, then the web shim's node --test suite
   ci        lint, then test
   bundle    macOS: target/bundle/disktree.app and its zip
               --sign IDENTITY   sign with a Developer ID (default: ad hoc)
@@ -77,7 +77,37 @@ fn clippy() -> Result<(), String> {
 }
 
 fn test() -> Result<(), String> {
-    run(&["test", "--workspace"])
+    run(&["test", "--workspace"])?;
+    web_js()
+}
+
+/// The browser shim's suite (`crates/disktree-web/tests-js`), through the
+/// Node every GitHub runner already has. Without Node it is skipped with a
+/// note rather than failed: the Rust gates carry the crate.
+fn web_js() -> Result<(), String> {
+    if Command::new("node")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_err()
+    {
+        println!("xtask test: no node on PATH; skipping the shim suite");
+        return Ok(());
+    }
+    // A glob, not a bare directory: node treats the latter as an entry
+    // point to load. There is no shell here, so node expands the pattern.
+    let status = Command::new("node")
+        .args(["--test", "crates/disktree-web/tests-js/*.test.mjs"])
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|err| format!("could not start `node --test`: {err}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("`node --test crates/disktree-web/tests-js/` failed".to_string())
+    }
 }
 
 fn run(args: &[&str]) -> Result<(), String> {

@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use disktree_core::removal::Target;
-use disktree_core::tree::{Metric, Node};
+use crate::removal::Target;
+use crate::tree::{Metric, Node};
 use rustc_hash::FxHashSet;
 
 /// Marked paths, in the order they were marked.
@@ -107,8 +107,10 @@ pub fn is_hidden(path: &Path) -> bool {
 }
 
 /// Shorten a path for display: `~` for the home directory, and the path with
-/// the home prefix replaced when it is below it. The separator after `~` is
-/// the platform's, so Windows shows `~\AppData\Local`, not `~/AppData\Local`.
+/// the home prefix replaced when it is below it.
+///
+/// The separator after `~` is the platform's, so Windows shows
+/// `~\AppData\Local`, not `~/AppData\Local`.
 pub fn display_path(path: &Path, home: Option<&Path>) -> String {
     match home
         .and_then(|home| path.strip_prefix(home).ok().map(|rest| (home, rest)))
@@ -124,7 +126,7 @@ pub fn display_path(path: &Path, home: Option<&Path>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use disktree_core::tree::{NodeKind, aggregate};
+    use crate::tree::{NodeKind, aggregate};
 
     fn file(name: &str, bytes: u64) -> Node {
         Node::entry(name, NodeKind::File, bytes)

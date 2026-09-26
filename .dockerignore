@@ -1,0 +1,2 @@
+# The build needs sources only; never upload the local build output.
+target

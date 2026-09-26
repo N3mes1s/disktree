@@ -13,8 +13,6 @@
 
 mod app_menu;
 mod appearance;
-mod git;
-mod marks;
 mod palette;
 mod state;
 #[cfg(test)]
@@ -103,7 +101,7 @@ fn run() -> Result<()> {
                             title: Some(
                                 format!(
                                     "disktree · {}",
-                                    marks::display_path(
+                                    disktree_core::marks::display_path(
                                         &title_root,
                                         home.as_deref(),
                                     )

@@ -32,10 +32,9 @@ use gpui_kit::{
 use gpui_omarchy::Status;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::git::GitState;
-
-use crate::marks::{Marks, display_path, is_hidden};
 use crate::treemap_view::{Mosaic, TileDeco};
+use disktree_core::git::GitState;
+use disktree_core::marks::{Marks, display_path, is_hidden};
 
 /// What a tile's colour says.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -629,7 +628,7 @@ impl Disktree {
         self.git_pending.insert(path.clone());
         let task = cx.background_executor().spawn({
             let path = path.clone();
-            async move { crate::git::state(&path) }
+            async move { disktree_core::git::state(&path) }
         });
         cx.spawn(async move |this, cx| {
             let state = task.await;
@@ -2231,7 +2230,10 @@ impl Disktree {
             self.notice = Some((
                 format!(
                     "{} is no longer on disk",
-                    crate::marks::display_path(&path, self.home.as_deref())
+                    disktree_core::marks::display_path(
+                        &path,
+                        self.home.as_deref()
+                    )
                 ),
                 Status::Warning,
             ));
@@ -2771,7 +2773,7 @@ impl Render for Disktree {
         // a key, a click, a rescan or a folder chosen from the menu.
         let title = format!(
             "disktree · {}",
-            crate::marks::display_path(
+            disktree_core::marks::display_path(
                 &self.current_path(),
                 self.home.as_deref()
             )

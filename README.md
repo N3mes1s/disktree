@@ -231,6 +231,44 @@ first (git work that exists nowhere else, a tool's own clean command) and
 touching nothing else. A name holding a newline is left out of the list and
 escaped in the prompt, so it cannot pass for another path.
 
+## In a browser, on another machine
+
+`disktree-web` is the same application over HTTP, for the machine at the
+other end of an SSH session: the same treemap, marks, review screen and
+removal guards, with every decision made server-side by the same code the
+desktop runs. The browser only draws the frames it is sent and posts input
+back — no GPU or desktop session needed on the server.
+
+```sh
+disktree-web /var            # serve a scan of /var on 127.0.0.1:8737
+disktree-web --listen 0.0.0.0:8737 --token "$(openssl rand -hex 16)"
+```
+
+It binds to localhost by default; the comfortable way to look at a remote
+machine is a tunnel: `ssh -L 8737:127.0.0.1:8737 host`, then open
+http://127.0.0.1:8737. Listening on a wider address without `--token` warns
+loudly, because anyone who can reach the page can mark and remove files
+under the scanned directory. Removal is exactly as guarded as the desktop:
+only paths under the scanned root, never a mount point, the root, your home
+or a system tree, and a permanent deletion still asks first.
+
+Everything the desktop does is there: breadcrumbs with their sibling menus,
+back and forward through the directories visited (alt-arrow or the ‹ ›
+buttons), scroll-to-zoom into directories, arrow and Tab navigation, the
+name filter, Size / Files / Age, the hidden and apparent-size switches,
+*Worth a look*, the git state of a checkout, the free-space meter and its
+projection, the review screen's *Save list…* (a download) and *Copy as
+prompt* (the clipboard where the browser allows it, a plain-text tab where
+not), trash or permanent removal with its confirmation, and the measured
+number of what came back. Interface zoom is the browser's own zoom, and the
+page follows `prefers-color-scheme`: Tokyo Night dark, Flexoki light.
+
+On a phone, tablet or touchscreen laptop the same page works by touch: tap
+selects, double-tap opens, a long press marks, one finger pans and a pinch
+zooms. Wherever a touchscreen is present — or the window is too narrow for
+the side panel — the key bar becomes a row of buttons: Up, Mark, Open,
+Filter, Details (the panel as a bottom sheet) and Review.
+
 ## What it measures
 
 - **Disk usage** by default: `st_blocks × 512`, the number `du` reports and the
@@ -351,7 +389,8 @@ gone while their neighbours are not.
 
 | path | what lives there |
 | --- | --- |
-| `crates/disktree-core` | scanning, the tree, the squarified layout, free space and removal — no UI |
+| `crates/disktree-core` | scanning, the tree, the squarified layout, free space, marks, git and removal — no UI |
+| `crates/disktree-web` | the same application over HTTP: `app.rs` is the state machine, `render.rs`/`mosaic.rs` the screens and SVG, `server.rs` the two endpoints |
 | `crates/disktree-app/src/state.rs` | every action the interface can take, and the key map |
 | `crates/disktree-app/src/views.rs` | the screens |
 | `crates/disktree-app/src/treemap_view.rs` | painting the mosaic and its labels |
