@@ -444,9 +444,11 @@ fn removal_over_http_deletes_and_rescans() {
     );
     let (status, body) = http(addr, "POST", "/api/input", Some(batch));
     assert_eq!(status, 200);
+    // frame() pumps before rendering, so on a fast machine the one-item run
+    // finishes inside this very request: Removing, or already Done.
     assert!(
-        body.contains("Removing"),
-        "the run starts at once: {body:.200}"
+        body.contains("Removing") || body.contains("removal finished"),
+        "the run is under way: {body:.200}",
     );
 
     // Poll the frame until the removal and the rescan behind it settle.
