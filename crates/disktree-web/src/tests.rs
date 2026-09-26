@@ -75,6 +75,9 @@ fn settle(app: &mut Web) {
     }
 }
 
+// On macOS a tempdir is /private/tmp, and /private is a system tree: the
+// guards refuse the plan, by design. Linux and Windows CI exercise the flow.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn the_full_removal_flow_over_the_state_machine() {
     let fix = fixture();
@@ -416,6 +419,9 @@ fn input_over_http_marks_and_the_frame_admits_it() {
     assert!(body.contains("junk"), "the row names the mark");
 }
 
+// Same reason as the state-machine flow: tempdirs on macOS are under the
+// guarded /private tree.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn removal_over_http_deletes_and_rescans() {
     let fix = fixture();
@@ -605,9 +611,11 @@ fn a_garbage_removal_mode_never_arms_permanent_deletion() {
     assert!(!body.contains("btn danger\""), "no armed danger button");
 }
 
-/// A name that is not UTF-8: ordinary on Unix, and it must not wedge the
+/// A name that is not UTF-8: ordinary on Linux, and it must not wedge the
 /// renderer — every frame while it is marked carries its path in `data-ev`.
-#[cfg(unix)]
+/// Linux-gated rather than Unix: APFS refuses to create such a name at all,
+/// so the premise cannot be built on macOS.
+#[cfg(target_os = "linux")]
 #[test]
 fn non_utf8_names_survive_marking_and_unmarking() {
     use std::os::unix::ffi::OsStrExt as _;
