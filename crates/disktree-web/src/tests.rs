@@ -342,8 +342,16 @@ fn http(
 /// A server on an ephemeral port, stopped with the test process.
 fn serve_test(app: Web, token: Option<&str>) -> std::net::SocketAddr {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-    let tiny_http::ListenAddr::IP(addr) = server.server_addr() else {
-        panic!("an IP listen address");
+    // A match, not let-else: on Windows the IP variant is the only one, so
+    // let-else is irrefutable there and that lint gate fires instead.
+    #[allow(
+        clippy::manual_let_else,
+        reason = "let-else is irrefutable on Windows, where ListenAddr has no Unix variant"
+    )]
+    let addr = match server.server_addr() {
+        tiny_http::ListenAddr::IP(addr) => addr,
+        #[cfg(unix)]
+        _ => panic!("an IP listen address"),
     };
     let app = Arc::new(Mutex::new(app));
     let token = token.map(|raw| Arc::new(crate::server::Token::new(raw)));
