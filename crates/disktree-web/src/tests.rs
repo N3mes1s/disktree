@@ -7,7 +7,9 @@
 use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+#[cfg(not(target_os = "macos"))]
+use std::time::Duration;
+use std::time::Instant;
 
 use disktree_core::scan::{ScanOptions, scan};
 use disktree_core::tree::Node;
