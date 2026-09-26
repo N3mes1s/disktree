@@ -107,8 +107,10 @@ pub fn is_hidden(path: &Path) -> bool {
 }
 
 /// Shorten a path for display: `~` for the home directory, and the path with
-/// the home prefix replaced when it is below it. The separator after `~` is
-/// the platform's, so Windows shows `~\AppData\Local`, not `~/AppData\Local`.
+/// the home prefix replaced when it is below it.
+///
+/// The separator after `~` is the platform's, so Windows shows
+/// `~\AppData\Local`, not `~/AppData\Local`.
 pub fn display_path(path: &Path, home: Option<&Path>) -> String {
     match home
         .and_then(|home| path.strip_prefix(home).ok().map(|rest| (home, rest)))

@@ -2230,7 +2230,10 @@ impl Disktree {
             self.notice = Some((
                 format!(
                     "{} is no longer on disk",
-                    crate::marks::display_path(&path, self.home.as_deref())
+                    disktree_core::marks::display_path(
+                        &path,
+                        self.home.as_deref()
+                    )
                 ),
                 Status::Warning,
             ));
@@ -2770,7 +2773,7 @@ impl Render for Disktree {
         // a key, a click, a rescan or a folder chosen from the menu.
         let title = format!(
             "disktree · {}",
-            crate::marks::display_path(
+            disktree_core::marks::display_path(
                 &self.current_path(),
                 self.home.as_deref()
             )
