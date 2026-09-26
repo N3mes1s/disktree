@@ -359,6 +359,9 @@ fn a_new_departure_clears_the_forward_stack() {
     assert!(!app.can_go_forward());
 }
 
+// The routes serve the plan, and on macOS the plan of a tempdir mark is
+// empty by guard: /private is a system tree. Linux and Windows run it.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn the_export_routes_serve_the_plan_as_text() {
     let fix = fixture();
