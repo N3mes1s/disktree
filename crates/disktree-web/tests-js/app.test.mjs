@@ -301,6 +301,30 @@ test("long-press marks with ctrl; its synthetic click is suppressed", async () =
   assert.equal(clicks[0].ctrl, true);
 });
 
+test("hovering a has-tip source shows its card, with its keys", async () => {
+  const { document } = boot();
+  const src = document.attach("span", {
+    classes: ["has-tip"],
+    dataset: {
+      name: "code",
+      tipPath: "~/code",
+      size: "265 GiB",
+      meta: "1.8M files · 44k dirs · 12 MiB direct",
+      percent: "68%",
+      bar: "▓▓▓▓▓▓░░░░",
+      dir: "1",
+      keys: "alt ← back",
+    },
+  });
+  document._fire("mouseover", { target: src, clientX: 100, clientY: 40 });
+  const tip = document.getElementById("tooltip");
+  assert.ok(tip, "a card shows");
+  assert.ok(tip.textContent.includes("265 GiB"), "the target's size is on it");
+  assert.ok(tip.textContent.includes("alt ← back"), "the keys are on it");
+  document._fire("mouseover", { target: document.body, clientX: 0, clientY: 0 });
+  assert.equal(document.getElementById("tooltip"), null, "leaving hides it");
+});
+
 test("the poll loop survives being superseded by pointer traffic", async () => {
   // busy frames poll at 400 ms; a move storm must not stop them.
   const { document, context, calls, frame } = boot({

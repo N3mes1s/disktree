@@ -19,13 +19,24 @@ export class El {
     this.disabled = false;
     this.value = "";
     this.attributes = {};
-    this.textContent = "";
+    this._text = "";
     this.offsetWidth = 100;
     this.offsetHeight = 100;
     this._rect = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
     this._classes = new Set();
     this._listeners = null; // owned by the document, not the element
     this._html = "";
+  }
+
+  // textContent aggregates over children, as in a real DOM.
+  get textContent() {
+    return this._text
+      + this.children.map((c) => c.textContent).join("");
+  }
+
+  set textContent(v) {
+    this._text = String(v);
+    this.children = [];
   }
 
   get classList() {
@@ -40,7 +51,18 @@ export class El {
   appendChild(child) {
     child.parentElement = this;
     this.children.push(child);
+    this._doc._mount(child);
     return child;
+  }
+
+  remove() {
+    if (this.parentElement) {
+      const siblings = this.parentElement.children;
+      const at = siblings.indexOf(this);
+      if (at >= 0) siblings.splice(at, 1);
+      this.parentElement = null;
+    }
+    if (this._doc && this.id) this._doc._byId.delete(this.id);
   }
 
   // innerHTML is how frames land: the string is kept verbatim, and stub
@@ -134,6 +156,7 @@ export class FakeDocument {
   _mount(el) {
     el._doc = this;
     if (el.id) this._byId.set(el.id, el);
+    for (const child of el.children) this._mount(child);
   }
 
   createElement(tag) {

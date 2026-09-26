@@ -411,26 +411,43 @@ fn view_settings(app: &Web) -> String {
             } else {
                 (app.can_go_forward(), "›", "Forward", "right")
             };
-            let hint = app
-                .history_target(back)
-                .and_then(|(_, crumbs)| app.path_at(&crumbs))
-                .map(|path| {
-                    disktree_core::marks::display_path(
-                        &path,
-                        app.home.as_deref(),
-                    )
-                })
-                .map_or_else(
-                    || {
-                        format!(
-                            "{name} — alt {arrow}",
-                            arrow = if back { "←" } else { "→" }
+            let keys = format!(
+                "alt {} {}",
+                if back { "←" } else { "→" },
+                name.to_lowercase()
+            );
+            let target = app.history_target(back).map(|(_, crumbs)| crumbs);
+            let (hint, tip) = match &target {
+                Some(crumbs) => {
+                    let path = app.path_at(crumbs).map(|path| {
+                        disktree_core::marks::display_path(
+                            &path,
+                            app.home.as_deref(),
                         )
-                    },
-                    |path| format!("{name} to {path}"),
-                );
+                    });
+                    (
+                        path.as_ref()
+                            .map(|path| format!("{name} to {path}"))
+                            .unwrap_or_default(),
+                        node_tip_data(app, crumbs, &keys),
+                    )
+                }
+                // Nowhere to go: the button is disabled; say what it is for.
+                None => (
+                    format!("{name} — {keys}"),
+                    format!(
+                        " data-name=\"{}\" data-note=\"{}\"",
+                        esc(name),
+                        esc(&keys),
+                    ),
+                ),
+            };
+            // The tip lives on the wrapper: a disabled button swallows the
+            // pointer events the tooltip needs.
             format!(
-                "<button class=\"seg\" {} title=\"{}\" {}>{label}</button>",
+                "<span class=\"has-tip\"{}><button class=\"seg\" {} \
+                 title=\"{}\" {}>{label}</button></span>",
+                tip,
                 if enabled { "" } else { "disabled" },
                 esc(&hint),
                 ev(&serde_json::json!({
@@ -1652,6 +1669,48 @@ pub fn marks_ancestor(app: &Web, path: Option<&Path>) -> Option<String> {
         .filter(|item| item.path != path && path.starts_with(&item.path))
         .map(|item| short_name(&item.path))
         .next()
+}
+
+/// A node's card as tooltip data attributes, matching what the mosaic's
+/// tiles carry: the shim renders one tooltip shape for both. `keys` says
+/// what can be done from there (a tile's is the mark/open line; a history
+/// button's is its shortcut).
+fn node_tip_data(app: &Web, crumbs: &[usize], keys: &str) -> String {
+    let Some(node) = app.node_at(crumbs) else {
+        return String::new();
+    };
+    let path = app.path_at(crumbs);
+    let parent = &crumbs[..crumbs.len().saturating_sub(1)];
+    let parent_value = app.node_at(parent).map_or(0, |p| p.bytes);
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        " data-name=\"{}\" data-tip-path=\"{}\" data-size=\"{}\" \
+         data-meta=\"{}\" data-percent=\"{}\" data-bar=\"{}\" data-keys=\"{}\"{}{}",
+        esc(&node.name),
+        esc(&path.map_or_else(String::new, |path| {
+            disktree_core::marks::display_path(&path, app.home.as_deref())
+        })),
+        esc(&human_bytes(node.bytes)),
+        esc(&format!(
+            "{} files · {} dirs · {} direct",
+            disktree_core::size::human_count(node.files),
+            disktree_core::size::human_count(
+                node.dirs.saturating_sub(u64::from(node.is_dir()))
+            ),
+            human_bytes(node.own_bytes),
+        )),
+        crate::mosaic::percent(node.bytes, parent_value),
+        share_bar(node.bytes, parent_value.max(1), 10),
+        esc(keys),
+        if node.is_dir() { " data-dir=\"1\"" } else { "" },
+        if node.name.starts_with('.') {
+            " data-hidden=\"1\""
+        } else {
+            ""
+        },
+    );
+    out
 }
 
 pub fn short_name(path: &Path) -> String {

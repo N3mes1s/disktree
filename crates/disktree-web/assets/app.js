@@ -389,24 +389,29 @@ function tipEl(tag, cls, text) {
 
 function showTip(tile, x, y) {
   const d = tile.dataset;
-  if (!d.size) return; /* the merged "+N more" tail has nothing to add */
+  if (!d.size && !d.note) return; /* nothing to say */
   hideTip();
   tipTile = tile;
   const tip = tipEl("div", "", null);
   tip.id = "tooltip";
 
   const name = tipEl("div", "tip-name", null);
-  name.appendChild(tipEl("span", "tip-icon", d.dir === "1" ? "▣" : "▢"));
+  if (d.size || d.dir) {
+    name.appendChild(tipEl("span", "tip-icon", d.dir === "1" ? "▣" : "▢"));
+  }
   name.appendChild(tipEl("b", "", d.name));
   tip.appendChild(name);
   if (d.tipPath) tip.appendChild(tipEl("div", "tip-path", d.tipPath));
 
-  const size = tipEl("div", "tip-size", null);
-  size.appendChild(tipEl("span", "tip-bytes", d.size));
-  size.appendChild(tipEl("span", "mono", d.bar));
-  size.appendChild(tipEl("span", "dim", d.percent));
-  tip.appendChild(size);
-  tip.appendChild(tipEl("div", "dim", d.meta));
+  if (d.size) {
+    const size = tipEl("div", "tip-size", null);
+    size.appendChild(tipEl("span", "tip-bytes", d.size));
+    size.appendChild(tipEl("span", "mono", d.bar));
+    size.appendChild(tipEl("span", "dim", d.percent));
+    tip.appendChild(size);
+  }
+  if (d.meta) tip.appendChild(tipEl("div", "dim", d.meta));
+  if (d.note) tip.appendChild(tipEl("div", "dim", d.note));
 
   const chips = tipEl("div", "chips", null);
   if (d.hidden === "1") chips.appendChild(tipEl("span", "chip chip-dim", "Hidden"));
@@ -414,8 +419,10 @@ function showTip(tile, x, y) {
   if (d.covered) chips.appendChild(tipEl("span", "chip chip-dim", "Inside marked " + d.covered));
   if (chips.children.length) tip.appendChild(chips);
 
-  tip.appendChild(tipEl("div", "dim small",
-    d.dir === "1" ? "space mark · enter open" : "space mark"));
+  /* The hint line belongs to nodes; a note-only card's note says it all. */
+  const hint = d.keys
+    || (d.size ? (d.dir === "1" ? "space mark · enter open" : "space mark") : null);
+  if (hint) tip.appendChild(tipEl("div", "dim small", hint));
   document.body.appendChild(tip);
   positionTip(x, y);
 }
@@ -431,7 +438,7 @@ function positionTip(x, y) {
 
 document.addEventListener("mouseover", (event) => {
   const tile = event.target.closest
-    ? event.target.closest(".g-tile") : null;
+    ? event.target.closest(".g-tile, .has-tip") : null;
   if (tile === tipTile) return;
   if (!tile) { hideTip(); return; }
   showTip(tile, event.clientX, event.clientY);
