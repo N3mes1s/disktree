@@ -11,6 +11,18 @@ const app = document.getElementById("app");
 const token = new URLSearchParams(location.search).get("token") || "";
 const suffix = token ? "?token=" + encodeURIComponent(token) : "";
 
+/* The browser's appearance is the server's `Appearance`: dark or light fills
+ * in the SVG come from it. Sent with every batch, so a flip mid-gesture
+ * still lands. */
+const darkQuery = window.matchMedia
+  ? window.matchMedia("(prefers-color-scheme: dark)")
+  : null;
+const darkNow = () => !darkQuery || darkQuery.matches;
+
+/* The review screen's keys that only a browser can answer: downloads and
+ * the clipboard. Tracked from the frames, not guessed. */
+let lastScreen = "explore";
+
 /* Out-of-order responses must not clobber newer frames. */
 let sequence = 0;
 let busy = false;
@@ -32,7 +44,7 @@ async function send(events) {
     const response = await fetch("/api/input" + suffix, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ w, h, events }),
+      body: JSON.stringify({ w, h, dark: darkNow(), events }),
     });
     if (response.status === 204) return;
     if (!response.ok) return;
@@ -71,7 +83,8 @@ async function poll() {
    * the sequence) that didn't would stop the meter and the progress forever. */
   try {
     const response = await fetch(
-      "/api/frame" + suffix + (suffix ? "&" : "?") + "w=" + w + "&h=" + h);
+      "/api/frame" + suffix + (suffix ? "&" : "?")
+        + "w=" + w + "&h=" + h + "&dark=" + (darkNow() ? "1" : "0"));
     if (response.ok) {
       const frame = await response.json();
       if (ticket === sequence) apply(frame);
@@ -84,6 +97,12 @@ async function poll() {
 
 function apply(frame) {
   hideTip();
+  lastScreen = frame.screen || "explore";
+  /* Anchors to gated routes get the token they cannot carry themselves. */
+  for (const a of app.querySelectorAll
+      ? app.querySelectorAll("a[data-authed]") : []) {
+    a.href = a.getAttribute("href") + suffix;
+  }
   const old = document.getElementById("find-input");
   const findWasFocused = old && document.activeElement === old;
   /* The server is a round-trip behind the typist; its rendered value would
@@ -141,6 +160,12 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("#panel-close")) {
     sheetOpen = false;
     document.getElementById("panel")?.classList.remove("open");
+    return;
+  }
+  const copy = event.target.closest("#copy-prompt");
+  if (copy && !copy.disabled && !copy.classList.contains("disabled")) {
+    event.preventDefault();
+    copyPrompt(copy);
     return;
   }
   const control = event.target.closest("[data-ev]");
@@ -467,15 +492,49 @@ document.addEventListener("keydown", (event) => {
   else if (key.length === 1) key = key.toLowerCase();
   else if (!/^F\d+$/.test(key)) return;
 
+  /* The review screen's browser-side answers: s saves the list (a file
+   * download), a copies the prompt (the clipboard). Neither is a key the
+   * server can answer with. */
+  if (lastScreen === "review" && !event.ctrlKey && !event.metaKey
+      && !event.altKey && (key === "s" || key === "a")) {
+    event.preventDefault();
+    const el = document.getElementById(key === "s" ? "export-list" : "copy-prompt");
+    if (el && !el.disabled && !el.classList.contains("disabled")) el.click();
+    return;
+  }
+
   /* Keys the app owns must not scroll, quick-find or move focus. */
   const owned = /^[a-z0-9\[\]\/\-\+=?!xctrgdipm]$/i.test(key)
     || ["space", "enter", "backspace", "escape", "tab",
         "left", "right", "up", "down", "home", "end"].includes(key);
   if (!owned) return;
   if ((event.ctrlKey || event.metaKey) && key !== "escape") return;
+  /* Alt-arrows are the app's history; the browser's own must not win. */
+  if (event.altKey && (key === "left" || key === "right")) {
+    event.preventDefault();
+  } else if (event.altKey) return;
   event.preventDefault();
-  send([{ type: "key", key, ctrl: event.ctrlKey, shift: event.shiftKey }]);
+  send([{ type: "key", key, ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey }]);
 });
+
+/* The prompt goes to the clipboard where that exists, and to a tab of plain
+ * selectable text where it does not (a plain-http origin has no clipboard
+ * API). */
+async function copyPrompt(button) {
+  const label = button.textContent;
+  try {
+    const text = await (await fetch("/api/export/prompt" + suffix)).text();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = label; }, 1500);
+    } else {
+      window.open("/api/export/prompt" + suffix, "_blank");
+    }
+  } catch (_) {
+    window.open("/api/export/prompt" + suffix, "_blank");
+  }
+}
 
 /* ── the find field ─────────────────────────────────────────────────── */
 

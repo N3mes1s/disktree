@@ -20,8 +20,62 @@
   --divider: rgba(169, 177, 214, 0.12);
   --hover: rgba(169, 177, 214, 0.08);
   --control-border: rgba(169, 177, 214, 0.4);
+  --hover-ring: rgba(192, 202, 245, 0.55);
+  --on-accent: #13141c;
+  --accent-hover: #89b0f9;
+  /* The translucent forms of the status colours, one place to re-theme. */
+  --tip-bg: rgba(26, 27, 38, 0.93);
+  --overlay-bg: rgba(26, 27, 38, 0.86);
+  --warn-10: rgba(224, 175, 104, 0.10);
+  --warn-18: rgba(224, 175, 104, 0.18);
+  --warn-25: rgba(224, 175, 104, 0.25);
+  --warn-50: rgba(224, 175, 104, 0.50);
+  --warn-55: rgba(224, 175, 104, 0.55);
+  --warn-85: rgba(224, 175, 104, 0.85);
+  --danger-50: rgba(247, 118, 142, 0.50);
+  --danger-85: rgba(247, 118, 142, 0.85);
+  --accent-35: var(--accent-35);
   --hatch: repeating-linear-gradient(45deg,
     rgba(192, 202, 245, 0.5) 0 1.5px, transparent 1.5px 6px);
+}
+
+/* The desktop follows the Omarchy theme; a browser's is
+ * `prefers-color-scheme`. The light pair is Flexoki, the desktop's own light
+ * theme — the same values, the same meaning. The mosaic's fills follow
+ * through the server, which hears the appearance on every frame. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fffcf0;
+    --surface: #f2f0e5;
+    --inset: #e6e4d9;
+    --fg: #575653;
+    --bright: #100f0f;
+    --accent: #205ea6;
+    --selection: #dad8ce;
+    --border: #b7b5ac;
+    --danger: #af3029;
+    --warning: #855b00;
+    --success: #526600;
+    --divider: rgba(16, 15, 15, 0.12);
+    --hover: rgba(16, 15, 15, 0.08);
+    --control-border: rgba(16, 15, 15, 0.4);
+    --hover-ring: rgba(87, 86, 83, 0.5);
+    --on-accent: #fffcf0;
+    --accent-hover: #1b5090;
+    --tip-bg: rgba(255, 252, 240, 0.94);
+    --overlay-bg: rgba(255, 252, 240, 0.88);
+    --warn-10: rgba(133, 91, 0, 0.10);
+    --warn-18: rgba(133, 91, 0, 0.18);
+    --warn-25: rgba(133, 91, 0, 0.25);
+    --warn-50: rgba(133, 91, 0, 0.50);
+    --warn-55: rgba(133, 91, 0, 0.55);
+    --warn-85: rgba(133, 91, 0, 0.85);
+    --danger-50: rgba(175, 48, 41, 0.50);
+    --danger-85: rgba(175, 48, 41, 0.85);
+    --accent-35: rgba(32, 94, 166, 0.35);
+    --hatch: repeating-linear-gradient(45deg,
+      rgba(16, 15, 15, 0.35) 0 1.5px, transparent 1.5px 6px);
+  }
 }
 
 * { box-sizing: border-box; border-radius: 0; }
@@ -122,7 +176,7 @@ html, body {
   padding: 4px 10px; font: inherit; cursor: pointer;
 }
 .seg:hover { background: var(--hover); color: var(--bright); }
-.seg.on { background: var(--accent); color: #13141c; }
+.seg.on { background: var(--accent); color: var(--on-accent); }
 .seg[disabled] { opacity: 0.4; cursor: default; }
 .depth-label { padding: 0 8px; color: var(--fg); font-size: 12px; }
 .check {
@@ -136,7 +190,7 @@ html, body {
 }
 .check.on .box { background: var(--accent); border-color: var(--accent); }
 .check.on .box::after {
-  content: "✓"; color: #13141c; font-size: 10px;
+  content: "✓"; color: var(--on-accent); font-size: 10px;
   display: block; text-align: center; line-height: 11px;
 }
 .check:hover { color: var(--bright); }
@@ -184,12 +238,12 @@ html, body {
 #mosaic-wrap { touch-action: none; }
 #mosaic text { font-family: inherit; pointer-events: none; }
 /* The hover ring is the browser's own work: no request, no repaint. */
-.g-tile:hover .tile-body { stroke: rgba(192, 202, 245, 0.55); stroke-width: 1px; }
+.g-tile:hover .tile-body { stroke: var(--hover-ring); stroke-width: 1px; }
 #mosaic .overlay { pointer-events: none; }
 
 #tooltip {
   position: fixed; z-index: 60; max-width: 272px;
-  background: rgba(26, 27, 38, 0.93); border: 1px solid var(--control-border);
+  background: var(--tip-bg); border: 1px solid var(--control-border);
   padding: 8px; font-size: 11px; pointer-events: none;
   display: flex; flex-direction: column; gap: 4px;
 }
@@ -212,7 +266,7 @@ html, body {
   position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
   cursor: col-resize;
 }
-#panel-handle:hover { background: rgba(122, 162, 247, 0.35); }
+#panel-handle:hover { background: var(--accent-35); }
 #panel-lists {
   display: flex; flex-direction: column; gap: 16px;
   flex: 1; min-height: 0; overflow-y: auto;
@@ -257,8 +311,8 @@ html, body {
   font-size: 11px; padding: 1px 6px; border: 1px solid var(--border);
   color: var(--fg);
 }
-.chip-danger { color: var(--danger); border-color: rgba(247,118,142,0.5); }
-.chip-warn { color: var(--warning); border-color: rgba(224,175,104,0.5); }
+.chip-danger { color: var(--danger); border-color: var(--danger-50); }
+.chip-warn { color: var(--warning); border-color: var(--warn-50); }
 .chip-dim { color: var(--fg); opacity: 0.8; }
 
 .actions { display: flex; gap: 8px; }
@@ -270,15 +324,15 @@ html, body {
 }
 .btn:hover { background: var(--hover); }
 .btn[disabled] { opacity: 0.4; cursor: default; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #13141c; }
-.btn.primary:hover { background: #89b0f9; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hover); }
 .btn.highlight {
   background: var(--warning); border-color: var(--warning);
-  color: #1a1b26; font-weight: 600;
+  color: var(--on-accent); font-weight: 600;
 }
-.btn.highlight:hover { background: rgba(224,175,104,0.85); }
-.btn.danger { background: var(--danger); border-color: var(--danger); color: #1a1b26; }
-.btn.danger:hover { background: rgba(247,118,142,0.85); }
+.btn.highlight:hover { background: var(--warn-85); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: var(--on-accent); }
+.btn.danger:hover { background: var(--danger-85); }
 .btn.outline { background: none; }
 .btn.secondary { background: var(--surface); }
 .btn.flex-1 { text-align: center; }
@@ -312,8 +366,8 @@ html, body {
 .notice {
   border: 1px solid; padding: 4px 8px; font-size: 11px; flex-shrink: 0;
 }
-.notice.warn { color: var(--warning); border-color: rgba(224,175,104,0.5); }
-.notice.danger { color: var(--danger); border-color: rgba(247,118,142,0.5); }
+.notice.warn { color: var(--warning); border-color: var(--warn-50); }
+.notice.danger { color: var(--danger); border-color: var(--danger-50); }
 .notice.neutral { color: var(--fg); border-color: var(--control-border); }
 
 .free-row { display: flex; align-items: baseline; gap: 6px; }
@@ -330,9 +384,9 @@ html, body {
 .meter .used.danger-bg { background: var(--danger); }
 .meter .back {
   position: absolute; top: 0; bottom: 0;
-  background-color: rgba(224,175,104,0.25);
+  background-color: var(--warn-25);
   background-image: repeating-linear-gradient(45deg,
-    rgba(224,175,104,0.55) 0 1px, transparent 1px 3px);
+    var(--warn-55) 0 1px, transparent 1px 3px);
 }
 .meter.wide { width: 320px; flex: none; }
 .meter-row { display: flex; align-items: center; gap: 12px; }
@@ -340,10 +394,10 @@ html, body {
 .review-btn {
   display: flex; align-items: center; gap: 8px; margin-top: 4px;
   padding: 6px 12px; width: 100%;
-  border: 1px solid var(--warning); background: rgba(224,175,104,0.1);
+  border: 1px solid var(--warning); background: var(--warn-10);
   color: var(--warning); font: inherit; cursor: pointer; text-align: left;
 }
-.review-btn:hover { background: rgba(224,175,104,0.18); }
+.review-btn:hover { background: var(--warn-18); }
 
 /* ── key bar ────────────────────────────────────────────────────────── */
 
@@ -426,7 +480,7 @@ html, body {
 
 .overlay {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(26, 27, 38, 0.86);
+  background: var(--overlay-bg);
   display: flex; align-items: center; justify-content: center;
 }
 .dialog {

@@ -33,6 +33,8 @@ enum Event {
         ctrl: bool,
         #[serde(default)]
         shift: bool,
+        #[serde(default)]
+        alt: bool,
     },
     /// Pointer moved over the mosaic, in mosaic-local pixels.
     Move {
@@ -130,13 +132,18 @@ enum Event {
     FindClear,
 }
 
-/// The input batch the shim posts: the mosaic's size, then what happened.
+/// The input batch the shim posts: the mosaic's size, the browser's
+/// appearance, then what happened.
 #[derive(Debug, serde::Deserialize)]
 struct Input {
     #[serde(default)]
     w: f32,
     #[serde(default)]
     h: f32,
+    /// `prefers-color-scheme: dark` on the client, sent every batch so the
+    /// fills can never sit on the wrong side of a theme flip.
+    #[serde(default)]
+    dark: Option<bool>,
     #[serde(default)]
     events: Vec<Event>,
 }
@@ -246,8 +253,56 @@ pub fn handle(
         }
         (Method::Get, "/api/frame") => {
             let query = request.url().split_once('?').map_or("", |(_, q)| q);
-            let (w, h) = size_from(query);
-            respond(request, render_with(app, w, h, Vec::new()))
+            let (w, h, dark) = params_from(query);
+            respond(request, render_with(app, w, h, dark, Vec::new()))
+        }
+        (Method::Get, "/api/export/list") => {
+            // The marked list as one path per line, for a script or a later
+            // look. Content-Disposition makes the browser save it.
+            let body = {
+                let app = match app.lock() {
+                    Ok(app) => app,
+                    Err(poison) => poison.into_inner(),
+                };
+                disktree_core::export::delete_list(&app.plan().targets)
+            };
+            let mut response = body_response(
+                &request,
+                body.into_bytes(),
+                "text/plain; charset=utf-8",
+                StatusCode(200),
+                "no-store",
+            );
+            response.add_header(
+                Header::from_bytes(
+                    "Content-Disposition",
+                    "attachment; filename=disktree-delete-list.txt",
+                )
+                .unwrap(),
+            );
+            request.respond(response)
+        }
+        (Method::Get, "/api/export/prompt") => {
+            // The cleanup brief for a coding agent, as text to copy.
+            let body = {
+                let app = match app.lock() {
+                    Ok(app) => app,
+                    Err(poison) => poison.into_inner(),
+                };
+                disktree_core::export::agent_prompt(
+                    &app.plan().targets,
+                    &app.root_path,
+                    app.space,
+                )
+            };
+            let response = body_response(
+                &request,
+                body.into_bytes(),
+                "text/plain; charset=utf-8",
+                StatusCode(200),
+                "no-store",
+            );
+            request.respond(response)
         }
         (Method::Post, "/api/input") => {
             let mut body = String::new();
@@ -256,7 +311,13 @@ pub fn handle(
             match (read, serde_json::from_str::<Input>(&body)) {
                 (Ok(_), Ok(input)) => respond(
                     request,
-                    render_with(app, input.w, input.h, input.events),
+                    render_with(
+                        app,
+                        input.w,
+                        input.h,
+                        input.dark,
+                        input.events,
+                    ),
                 ),
                 _ => request.respond(bad_request()),
             }
@@ -291,12 +352,20 @@ fn render_with(
     app: &Arc<Mutex<Web>>,
     w: f32,
     h: f32,
+    dark: Option<bool>,
     events: Vec<Event>,
 ) -> Answer {
     let mut app = match app.lock() {
         Ok(app) => app,
         Err(poison) => poison.into_inner(),
     };
+    if let Some(dark) = dark {
+        app.appearance = if dark {
+            crate::palette::Appearance::Dark
+        } else {
+            crate::palette::Appearance::Light
+        };
+    }
     if w >= 1.0 && h >= 1.0 && w.is_finite() && h.is_finite() {
         app.mosaic_size = (w, h);
     } else if app.mosaic_size.0 < 1.0 {
@@ -353,7 +422,14 @@ fn render_with(
 /// One event against the state machine.
 fn apply(app: &mut Web, event: Event) {
     match event {
-        Event::Key { key, ctrl, shift } => app.on_key(&key, ctrl, shift),
+        Event::Key {
+            key,
+            ctrl,
+            shift,
+            alt,
+        } => {
+            app.on_key(&key, ctrl, shift, alt);
+        }
         Event::Move { x, y } => app.on_mouse_move(x, y),
         Event::Leave => app.on_mouse_leave(),
         Event::Click {
@@ -528,16 +604,20 @@ pub fn decode_path(text: &str) -> Option<PathBuf> {
 }
 
 /// `w`/`h` out of a query string.
-fn size_from(query: &str) -> (f32, f32) {
+/// The frame query's `w`/`h`, and its `dark` when present.
+fn params_from(query: &str) -> (f32, f32, Option<bool>) {
     let mut size = (0.0, 0.0);
+    let mut dark = None;
     for pair in query.split('&') {
         if let Some(value) = pair.strip_prefix("w=") {
             size.0 = value.parse().unwrap_or(0.0);
         } else if let Some(value) = pair.strip_prefix("h=") {
             size.1 = value.parse().unwrap_or(0.0);
+        } else if let Some(value) = pair.strip_prefix("dark=") {
+            dark = Some(value == "1");
         }
     }
-    size
+    (size.0, size.1, dark)
 }
 
 const INDEX: &str = include_str!("../assets/index.html");

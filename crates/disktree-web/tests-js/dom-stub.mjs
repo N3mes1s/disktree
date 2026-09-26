@@ -186,7 +186,7 @@ export class FakeDocument {
 // The global context the shim runs in. `responses` is a queue or a function
 // of ({ url, body }) => { status, json } the test controls; every call is
 // recorded in `calls`.
-export function makeContext({ search = "", responses } = {}) {
+export function makeContext({ search = "", responses, dark = true } = {}) {
   const document = new FakeDocument();
   const app = document.createElement("div");
   app.id = "app";
@@ -227,6 +227,10 @@ export function makeContext({ search = "", responses } = {}) {
   context.window = {
     innerWidth: 1366,
     innerHeight: 768,
+    matchMedia: (query) => ({
+      matches: query.includes("dark") === dark,
+      addEventListener() {},
+    }),
     addEventListener: (type, fn) => {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(fn);

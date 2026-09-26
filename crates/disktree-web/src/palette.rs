@@ -1,13 +1,61 @@
 //! Colour that means something, for the web build.
 //!
-//! A line-for-line port of the desktop `disktree-app/src/palette.rs` with the
-//! theme fixed to gpui-omarchy's built-in Tokyo Night (the Omarchy default
-//! dark theme): a browser has no Omarchy theme to follow, so the web build
-//! commits to the palette the desktop app ships in by default. The dark branch
-//! of every desktop formula is what runs here; the math is unchanged, so a
-//! tile means the same colour on both front ends.
+//! A line-for-line port of the desktop `disktree-app/src/palette.rs`, themed
+//! by [`Appearance`]: the desktop follows the Omarchy theme, the browser's
+//! equivalent is `prefers-color-scheme`, relayed by the shim. The built-in
+//! pair is the desktop's own: Tokyo Night dark, Flexoki light — a tile means
+//! the same colour on both front ends, in either appearance.
 
 use disktree_core::classify::Category;
+
+/// Dark or light: the browser's `prefers-color-scheme`, relayed by the shim.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Appearance {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    /// One constant or the other.
+    const fn pick(self, dark: u32, light: u32) -> u32 {
+        match self {
+            Self::Dark => dark,
+            Self::Light => light,
+        }
+    }
+
+    /// One constant or the other, as HSL.
+    fn themed(self, dark: u32, light: u32) -> Hsl {
+        hsl_of(self.pick(dark, light))
+    }
+
+    fn inset(self) -> Hsl {
+        self.themed(theme::INSET, light::INSET)
+    }
+
+    fn bright(self) -> Hsl {
+        self.themed(theme::BRIGHT, light::BRIGHT)
+    }
+
+    fn foreground(self) -> Hsl {
+        self.themed(theme::BRIGHT, light::FOREGROUND)
+    }
+
+    fn accent(self) -> Hsl {
+        self.themed(theme::ACCENT, light::ACCENT)
+    }
+
+    /// The danger colour, in this appearance.
+    pub fn danger(self) -> Hsl {
+        self.themed(theme::DANGER, light::DANGER)
+    }
+
+    /// The one strong colour, in this appearance.
+    pub fn warning(self) -> Hsl {
+        self.themed(theme::WARNING, light::WARNING)
+    }
+}
 
 /// One colour in HSL, matching the desktop's colour space (`h` is 0..1).
 #[derive(Clone, Copy, Debug)]
@@ -27,6 +75,16 @@ pub mod theme {
     pub const ACCENT: u32 = 0x007a_a2f7;
     pub const DANGER: u32 = 0x00f7_768e;
     pub const WARNING: u32 = 0x00e0_af68;
+}
+
+/// The light constants, as `Theme::flexoki_light()` ships them.
+pub mod light {
+    pub const INSET: u32 = 0x00e6_e4d9;
+    pub const FOREGROUND: u32 = 0x0010_0f0f;
+    pub const BRIGHT: u32 = 0x0010_0f0f;
+    pub const ACCENT: u32 = 0x0020_5ea6;
+    pub const DANGER: u32 = 0x00af_3029;
+    pub const WARNING: u32 = 0x0085_5b00;
 }
 
 const fn rgb(hex: u32) -> (f32, f32, f32) {
@@ -90,23 +148,6 @@ pub fn css(color: Hsl) -> String {
     }
 }
 
-/// A theme constant as CSS, with an optional alpha.
-pub fn hex(hex: u32, alpha: f32) -> String {
-    let (r, g, b) = rgb(hex);
-    let channel = |v: f32| (v * 255.0).round() as u8;
-    if alpha >= 0.999 {
-        format!("#{hex:06x}")
-    } else {
-        format!(
-            "rgba({},{},{},{:.2})",
-            channel(r),
-            channel(g),
-            channel(b),
-            alpha
-        )
-    }
-}
-
 #[allow(
     clippy::many_single_char_names,
     reason = "c, x, m are the textbook names for the HSL-to-RGB intermediates"
@@ -155,23 +196,29 @@ const fn hue(category: Category) -> (f32, f32) {
 }
 
 /// The fill for a tile of `category`, `depth` levels into the view.
-pub fn category_fill(category: Category, depth: u32) -> Hsl {
+pub fn category_fill(
+    appearance: Appearance,
+    category: Category,
+    depth: u32,
+) -> Hsl {
     let (h, chroma) = hue(category);
     let step = depth.min(4) as f32;
-    let (s, l) = (0.26 * chroma, step.mul_add(0.028, 0.215));
-    mix(Hsl { h, s, l, a: 1.0 }, hsl_of(theme::INSET), 0.12)
+    let (s, l) = match appearance {
+        Appearance::Dark => (0.26 * chroma, step.mul_add(0.028, 0.215)),
+        Appearance::Light => (0.30 * chroma, step.mul_add(-0.03, 0.84)),
+    };
+    mix(Hsl { h, s, l, a: 1.0 }, appearance.inset(), 0.12)
 }
 
 /// The saturated version of a category's hue: the strip over a top-level
 /// directory and the legend swatch.
-pub fn category_accent(category: Category) -> Hsl {
+pub fn category_accent(appearance: Appearance, category: Category) -> Hsl {
     let (h, chroma) = hue(category);
-    Hsl {
-        h,
-        s: 0.42 * chroma,
-        l: 0.52,
-        a: 1.0,
-    }
+    let (s, l) = match appearance {
+        Appearance::Dark => (0.42 * chroma, 0.52),
+        Appearance::Light => (0.45 * chroma, 0.46),
+    };
+    Hsl { h, s, l, a: 1.0 }
 }
 
 /// The age ramp, newest first: this week, this month, this half-year, this
@@ -194,50 +241,68 @@ pub fn age_bucket(days: i64) -> usize {
 
 /// The fill for age mode: recent writes carry the theme accent, and colour
 /// drains out of a tile as it goes untouched.
-pub fn age_fill(bucket: usize, depth: u32) -> Hsl {
+pub fn age_fill(appearance: Appearance, bucket: usize, depth: u32) -> Hsl {
     let fade = bucket.min(AGE_BUCKETS.len() - 1) as f32 / 4.0;
     let step = depth.min(4) as f32;
-    let s = (1.0 - fade).mul_add(0.34, 0.03);
-    let l = step.mul_add(0.028, 0.29 - fade * 0.09);
+    let (s, l) = match appearance {
+        Appearance::Dark => (
+            (1.0 - fade).mul_add(0.34, 0.03),
+            step.mul_add(0.028, 0.29 - fade * 0.09),
+        ),
+        Appearance::Light => (
+            (1.0 - fade).mul_add(0.36, 0.04),
+            step.mul_add(-0.03, 0.74 + fade * 0.1),
+        ),
+    };
     mix(
         Hsl {
-            h: hsl_of(theme::ACCENT).h,
+            h: appearance.accent().h,
             s,
             l,
             a: 1.0,
         },
-        hsl_of(theme::INSET),
+        appearance.inset(),
         0.1,
     )
 }
 
 /// The age swatch for the legend.
-pub fn age_accent(bucket: usize) -> Hsl {
+pub fn age_accent(appearance: Appearance, bucket: usize) -> Hsl {
     let fade = bucket.min(AGE_BUCKETS.len() - 1) as f32 / 4.0;
     Hsl {
-        h: hsl_of(theme::ACCENT).h,
+        h: appearance.accent().h,
         s: (1.0 - fade).mul_add(0.45, 0.04),
-        l: 0.55 - fade * 0.25,
+        l: match appearance {
+            Appearance::Dark => 0.55 - fade * 0.25,
+            Appearance::Light => 0.45 + fade * 0.25,
+        },
         a: 1.0,
     }
 }
 
 /// The one strong colour: selection, the main action, what can be had back.
-pub fn highlight() -> Hsl {
-    hsl_of(theme::WARNING)
+pub fn highlight(appearance: Appearance) -> Hsl {
+    appearance.warning()
 }
 
-/// The diagonal hatch over reclaimable space.
-pub fn hatch() -> Hsl {
-    Hsl {
-        a: 0.16,
-        ..hsl_of(theme::BRIGHT)
+/// The diagonal hatch over reclaimable space: quiet enough to leave the hue
+/// readable, visible on every fill.
+pub fn hatch(appearance: Appearance) -> Hsl {
+    match appearance {
+        Appearance::Dark => Hsl {
+            a: 0.16,
+            ..appearance.bright()
+        },
+        Appearance::Light => Hsl {
+            a: 0.18,
+            ..appearance.themed(theme::BRIGHT, light::FOREGROUND)
+        },
     }
 }
 
 /// A tile's name on top of its fill.
-pub fn label_color(depth: u32) -> Hsl {
-    let base = hsl_of(theme::BRIGHT);
+pub fn label_color(appearance: Appearance, depth: u32) -> Hsl {
+    let base = appearance.foreground();
     if depth == 0 {
         base
     } else {
@@ -246,13 +311,13 @@ pub fn label_color(depth: u32) -> Hsl {
 }
 
 /// The fill every marked or covered tile shares: the danger colour, quiet.
-pub fn marked_fill() -> Hsl {
-    mix(hsl_of(theme::INSET), hsl_of(theme::DANGER), 0.16)
+pub fn marked_fill(appearance: Appearance) -> Hsl {
+    mix(appearance.inset(), appearance.danger(), 0.16)
 }
 
 /// A filtered-out fill steps back toward the inset surface.
-pub fn filtered_fill(fill: Hsl, out: bool) -> Hsl {
-    mix(fill, hsl_of(theme::INSET), if out { 0.82 } else { 0.55 })
+pub fn filtered_fill(appearance: Appearance, fill: Hsl, out: bool) -> Hsl {
+    mix(fill, appearance.inset(), if out { 0.82 } else { 0.55 })
 }
 
 #[cfg(test)]
@@ -272,25 +337,28 @@ mod tests {
 
     #[test]
     fn colourful_categories_share_one_level() {
-        let code = category_fill(Category::Code, 0);
-        let git = category_fill(Category::Git, 0);
+        let code = category_fill(Appearance::Dark, Category::Code, 0);
+        let git = category_fill(Appearance::Dark, Category::Git, 0);
         assert!((code.l - git.l).abs() < 0.02);
         assert!((code.s - git.s).abs() < 0.03);
     }
 
     #[test]
     fn deeper_tiles_lift_away_from_the_background() {
-        let top = category_fill(Category::Code, 0);
-        let deep = category_fill(Category::Code, 3);
-        let distance = |fill: Hsl| (fill.l - hsl_of(theme::INSET).l).abs();
-        assert!(distance(deep) > distance(top) + 0.05);
+        for appearance in [Appearance::Dark, Appearance::Light] {
+            let top = category_fill(appearance, Category::Code, 0);
+            let deep = category_fill(appearance, Category::Code, 3);
+            // Away from the background: lighter on dark, darker on light.
+            let distance = |fill: Hsl| (fill.l - appearance.inset().l).abs();
+            assert!(distance(deep) > distance(top) + 0.05, "{appearance:?}");
+        }
     }
 
     #[test]
     fn the_highlight_is_not_a_category_colour() {
-        let highlight = highlight();
+        let highlight = highlight(Appearance::Dark);
         for category in Category::LEGEND {
-            let fill = category_fill(category, 0);
+            let fill = category_fill(Appearance::Dark, category, 0);
             assert!(highlight.s - fill.s > 0.2, "{category:?} competes");
         }
     }
@@ -302,12 +370,21 @@ mod tests {
         assert_eq!(age_bucket(100), 2);
         assert_eq!(age_bucket(300), 3);
         assert_eq!(age_bucket(5000), 4);
-        assert!(age_fill(0, 0).s > age_fill(4, 0).s);
+        assert!(
+            age_fill(Appearance::Dark, 0, 0).s
+                > age_fill(Appearance::Dark, 4, 0).s
+        );
     }
 
     #[test]
     fn opaque_colours_render_as_hex() {
         assert_eq!(css(hsl_of(theme::DANGER)), "#f7768e");
-        assert_eq!(hex(theme::WARNING, 0.5), "rgba(224,175,104,0.50)");
+        assert_eq!(
+            css(Hsl {
+                a: 0.5,
+                ..hsl_of(theme::WARNING)
+            }),
+            "rgba(224,175,104,0.50)",
+        );
     }
 }

@@ -39,6 +39,20 @@ pub enum ColorMode {
     Age,
 }
 
+/// Directories left behind and come back from, for `<` and `>`.
+///
+/// Kept as absolute paths, not crumbs: a re-scan or a widening renumbers the
+/// tree, and crumbs would then silently point at other directories.
+#[derive(Debug, Default)]
+pub struct History {
+    pub back: Vec<PathBuf>,
+    pub forward: Vec<PathBuf>,
+}
+
+/// How many directories back is remembered. Far more than anyone clicks
+/// through, and small enough that pruning after a scan costs nothing.
+const HISTORY_DEPTH: usize = 100;
+
 /// A trail crumb's sibling menu, open.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CrumbMenu {
@@ -279,6 +293,7 @@ pub struct Web {
     pub crumbs: Vec<usize>,
     pub selected: Option<Vec<usize>>,
     pub hovered: Option<Vec<usize>>,
+    pub history: History,
     /// The pointer moved more recently than the keyboard navigated. Then the
     /// tile under the pointer is what Space, X and Enter act on; after an
     /// arrow or Tab it is the keyboard selection again.
@@ -324,6 +339,9 @@ pub struct Web {
     pub crumb_menu: Option<CrumbMenu>,
 
     pub color_mode: ColorMode,
+    /// Dark or light fills: the browser's `prefers-color-scheme`, relayed by
+    /// the shim on every frame.
+    pub appearance: crate::palette::Appearance,
     /// The largest things worth clearing, recomputed when a scan lands.
     pub insights: Vec<Candidate>,
     /// What git knows about each checkout that has been selected; `None`
@@ -369,6 +387,7 @@ impl Web {
             crumbs: Vec::new(),
             selected: None,
             hovered: None,
+            history: History::default(),
             pointer_active: false,
             view: View::default(),
             layout_options: LayoutOptions {
@@ -404,6 +423,7 @@ impl Web {
             show_selection: true,
             crumb_menu: None,
             color_mode: ColorMode::Kind,
+            appearance: crate::palette::Appearance::default(),
             insights: Vec::new(),
             git: std::collections::HashMap::new(),
             device: None,
@@ -470,6 +490,7 @@ impl Web {
         }
         self.progress = ScanSnapshot::default();
         self.scan_error = None;
+        self.remember();
         self.scan_started = Some(Instant::now());
         self.scan_elapsed = None;
         self.scan_root.clone_from(&above);
@@ -536,6 +557,9 @@ impl Web {
         }
         self.progress = ScanSnapshot::default();
         self.scan_error = None;
+        if !self.crumbs.is_empty() {
+            self.remember();
+        }
         self.tree = None;
         self.crumbs.clear();
         self.selected = None;
@@ -616,6 +640,7 @@ impl Web {
                     });
                 }
                 self.keep_selection_valid();
+                self.prune_history();
                 self.select_largest();
             }
             Err(error) => self.scan_error = Some(error.to_string()),
@@ -828,6 +853,7 @@ impl Web {
         if !node.is_dir() || node.children.is_empty() {
             return;
         }
+        self.remember();
         self.selected = Some(target.clone());
         self.crumbs = target;
         self.forget_hover();
@@ -873,10 +899,16 @@ impl Web {
         let Some(parent_crumbs) = self.parent_crumbs() else {
             return;
         };
-        self.crumbs.clone_from(&parent_crumbs);
+        self.ascend_to(parent_crumbs);
+    }
+
+    /// Ascend to any ancestor: the same landing, however many levels.
+    fn ascend_to(&mut self, ancestor: Vec<usize>) {
+        self.remember();
+        self.crumbs.clone_from(&ancestor);
         self.forget_hover();
         self.cache = None;
-        self.selected = Some(parent_crumbs);
+        self.selected = Some(ancestor);
         self.view = View::IDENTITY;
     }
 
@@ -889,9 +921,118 @@ impl Web {
         }
     }
 
+    // ── history ─────────────────────────────────────────────────────────
+
+    /// Note the directory on screen as one to come back to, before leaving
+    /// it. A new departure ends whatever was ahead, as in a browser.
+    fn remember(&mut self) {
+        if self.tree.is_none() {
+            return;
+        }
+        let here = self.current_path();
+        if self.history.back.last() != Some(&here) {
+            self.history.back.push(here);
+        }
+        if self.history.back.len() > HISTORY_DEPTH {
+            self.history.back.remove(0);
+        }
+        self.history.forward.clear();
+    }
+
+    /// Drop what a new tree no longer holds: a removed directory, or one
+    /// renumbered away, stops being a target rather than pointing wrong.
+    fn prune_history(&mut self) {
+        let mut history = std::mem::take(&mut self.history);
+        history
+            .back
+            .retain(|path| self.crumbs_for_path(path).is_some());
+        history
+            .forward
+            .retain(|path| self.crumbs_for_path(path).is_some());
+        self.history = history;
+    }
+
+    /// Whether `<` would go anywhere: what drives its button's disabled state.
+    pub fn can_go_back(&self) -> bool {
+        self.history_target(true).is_some()
+    }
+
+    /// Whether `>` would go anywhere.
+    pub fn can_go_forward(&self) -> bool {
+        self.history_target(false).is_some()
+    }
+
+    /// `<`: the directory on screen before this one.
+    pub fn go_back(&mut self) {
+        self.step_history(true);
+    }
+
+    /// `>`: undo a `<`.
+    pub fn go_forward(&mut self) {
+        self.step_history(false);
+    }
+
+    /// Where `<` (or `>`) would go, and its place on that stack: the newest
+    /// entry that still resolves. Anything that no longer does is invisible
+    /// from here until a tree lands, which prunes it for good.
+    pub fn history_target(&self, back: bool) -> Option<(usize, Vec<usize>)> {
+        self.tree.as_ref()?;
+        let stack = if back {
+            &self.history.back
+        } else {
+            &self.history.forward
+        };
+        stack.iter().enumerate().rev().find_map(|(at, path)| {
+            self.crumbs_for_path(path).map(|crumbs| (at, crumbs))
+        })
+    }
+
+    fn step_history(&mut self, back: bool) {
+        let Some((at, target)) = self.history_target(back) else {
+            return;
+        };
+        let here = self.current_path();
+        let mut history = std::mem::take(&mut self.history);
+        let (from, to) = if back {
+            (&mut history.back, &mut history.forward)
+        } else {
+            (&mut history.forward, &mut history.back)
+        };
+        from.truncate(at);
+        to.push(here);
+        // The move is an ordinary one; it records itself like any other, so
+        // the stacks are put back afterwards.
+        self.travel(target);
+        self.history = history;
+    }
+
+    /// Go to `target` the way that fits: into a directory below, back out to
+    /// one above, or straight to one beside.
+    fn travel(&mut self, target: Vec<usize>) {
+        let enterable = self
+            .node_at(&target)
+            .is_some_and(|node| node.is_dir() && !node.children.is_empty());
+        if target.len() > self.crumbs.len()
+            && target.starts_with(&self.crumbs)
+            && enterable
+        {
+            self.enter(target);
+        } else if target.len() < self.crumbs.len()
+            && self.crumbs.starts_with(&target)
+        {
+            self.ascend_to(target);
+        } else {
+            self.go_to(target);
+        }
+    }
+
     /// Jump straight to a crumb from the breadcrumb bar.
     pub fn go_to(&mut self, crumbs: Vec<usize>) {
         self.crumb_menu = None;
+        // A reveal in the directory on screen goes nowhere.
+        if crumbs != self.crumbs {
+            self.remember();
+        }
         self.crumbs.clone_from(&crumbs);
         self.selected = Some(crumbs);
         self.forget_hover();
@@ -1501,7 +1642,7 @@ impl Web {
     /// Handle a key press, as the desktop's `dispatch_key` does. `key` is the
     /// GPUI-style lowercase name the browser shim sends (`enter`, `left`,
     /// `space`, `/`, …).
-    pub fn on_key(&mut self, key: &str, control: bool, shift: bool) {
+    pub fn on_key(&mut self, key: &str, control: bool, shift: bool, alt: bool) {
         // The confirmation dialog owns Enter and Escape while it is open; a
         // key that reaches here must not also act on the screen behind it.
         if self.confirm_open {
@@ -1522,6 +1663,21 @@ impl Web {
                 self.show_help = false;
             }
             return;
+        }
+
+        // Alt-arrows are history in every browser and file manager.
+        if alt && self.screen == Screen::Explore {
+            match key {
+                "left" => {
+                    self.go_back();
+                    return;
+                }
+                "right" => {
+                    self.go_forward();
+                    return;
+                }
+                _ => {}
+            }
         }
 
         match self.screen {

@@ -99,6 +99,7 @@ pub fn mosaic(app: &mut Web) -> String {
     let view = app.view;
     let age = app.color_mode == crate::app::ColorMode::Age;
     let now = app.scanned_at;
+    let appearance = app.appearance;
     // The DOM is not a GPU: tiles fully outside what the viewport shows —
     // with a quarter-screen margin so small pans stay painted — are never
     // emitted. Hit-testing runs against the full layout, so nothing that
@@ -236,7 +237,7 @@ pub fn mosaic(app: &mut Web) -> String {
         "<defs><pattern id=\"hatch\" width=\"6\" height=\"6\" \
          patternUnits=\"userSpaceOnUse\" patternTransform=\"rotate(45)\">\
          <rect width=\"1.5\" height=\"6\" fill=\"{}\"/></pattern></defs>",
-        palette::css(palette::hatch())
+        palette::css(palette::hatch(appearance))
     );
 
     for tile in &decos {
@@ -289,7 +290,7 @@ pub fn mosaic(app: &mut Web) -> String {
             rect.y,
             rect.w,
             rect.h,
-            fill(tile)
+            fill(tile, appearance)
         );
 
         // Reclaimable space is hatched, over any hue. Everything inside a
@@ -322,7 +323,10 @@ pub fn mosaic(app: &mut Web) -> String {
                 rect.y,
                 rect.w,
                 2.0_f32.min(rect.h),
-                palette::css(palette::category_accent(tile.category))
+                palette::css(palette::category_accent(
+                    appearance,
+                    tile.category
+                ))
             );
         }
 
@@ -334,7 +338,7 @@ pub fn mosaic(app: &mut Web) -> String {
                  height=\"4\" fill=\"{}\"/>",
                 rect.x + rect.w - 6.0,
                 rect.y + 2.0,
-                palette::hex(palette::theme::WARNING, 1.0)
+                palette::css(appearance.warning())
             );
         }
         out.push_str("</g>");
@@ -351,9 +355,9 @@ pub fn mosaic(app: &mut Web) -> String {
             continue;
         }
         let outline = if tile.selected {
-            Some((3u8, 2.0f32, palette::css(palette::highlight())))
+            Some((3u8, 2.0f32, palette::css(palette::highlight(appearance))))
         } else if tile.marked {
-            Some((1, 2.0, palette::hex(palette::theme::DANGER, 1.0)))
+            Some((1, 2.0, palette::css(appearance.danger())))
         } else {
             None
         };
@@ -379,28 +383,28 @@ pub fn mosaic(app: &mut Web) -> String {
         out.push_str(ring);
     }
 
-    paint_labels(&mut out, &labels, view);
+    paint_labels(&mut out, &labels, view, appearance);
     out.push_str("</svg>");
     out
 }
 
 /// The fill a tile would get on the desktop, resolved to CSS.
-fn fill(tile: &Deco) -> String {
+fn fill(tile: &Deco, appearance: crate::palette::Appearance) -> String {
     // Marked, or inside something marked: it all goes together.
     if tile.marked || tile.covered {
-        return palette::css(palette::marked_fill());
+        return palette::css(palette::marked_fill(appearance));
     }
     let depth = tile.depth.min(DEPTHS - 1);
     let fill = match tile.age_bucket {
-        Some(bucket) => palette::age_fill(bucket, depth),
-        None => palette::category_fill(tile.category, depth),
+        Some(bucket) => palette::age_fill(appearance, bucket, depth),
+        None => palette::category_fill(appearance, tile.category, depth),
     };
     // Only what matches keeps its colour; a directory holding matches steps
     // back less, so the way to them stays readable.
     palette::css(match tile.filtered {
         Filtered::Shown => fill,
-        Filtered::Holds => palette::filtered_fill(fill, false),
-        Filtered::Out => palette::filtered_fill(fill, true),
+        Filtered::Holds => palette::filtered_fill(appearance, fill, false),
+        Filtered::Out => palette::filtered_fill(appearance, fill, true),
     })
 }
 
@@ -408,7 +412,12 @@ fn fill(tile: &Deco) -> String {
 /// tile. Geometry follows the desktop's paint pass: name at a small inset,
 /// the size at the far end of a first-level band, following the name in a
 /// deeper one, stacked under it in a closed tile tall enough.
-fn paint_labels(out: &mut String, labels: &[Label], view: View) {
+fn paint_labels(
+    out: &mut String,
+    labels: &[Label],
+    view: View,
+    appearance: crate::palette::Appearance,
+) {
     // Type geometry, proportioned to the 12 px label size like the desktop's
     // is to its `name_size`.
     const NAME: f32 = 12.0;
@@ -424,14 +433,14 @@ fn paint_labels(out: &mut String, labels: &[Label], view: View) {
             continue;
         }
         let color = if label.marked {
-            palette::hex(palette::theme::DANGER, 1.0)
+            palette::css(appearance.danger())
         } else if label.dim {
             palette::css(palette::Hsl {
                 a: 0.5,
-                ..palette::label_color(1)
+                ..palette::label_color(appearance, 1)
             })
         } else {
-            palette::css(palette::label_color(label.depth))
+            palette::css(palette::label_color(appearance, label.depth))
         };
         // The first level is set in bold in its band: it names a region.
         let weight = if label.depth == 0 && label.header.is_some() {
@@ -459,7 +468,7 @@ fn paint_labels(out: &mut String, labels: &[Label], view: View) {
         }
         let dim = palette::css(palette::Hsl {
             a: 0.5,
-            ..palette::label_color(1)
+            ..palette::label_color(appearance, 1)
         });
         let size = esc(&label.size_text);
         // A closed tile stacks the size under the name when it is tall

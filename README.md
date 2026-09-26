@@ -253,11 +253,15 @@ only paths under the scanned root, never a mount point, the root, your home
 or a system tree, and a permanent deletion still asks first.
 
 Everything the desktop does is there: breadcrumbs with their sibling menus,
-scroll-to-zoom into directories, arrow and Tab navigation, the name filter,
-Size / Files / Age, the hidden and apparent-size switches, *Worth a look*,
-the git state of a checkout, the free-space meter and its projection, trash
-or permanent removal with its confirmation, and the measured number of what
-came back. Interface zoom is the browser's own zoom.
+back and forward through the directories visited (alt-arrow or the ‹ ›
+buttons), scroll-to-zoom into directories, arrow and Tab navigation, the
+name filter, Size / Files / Age, the hidden and apparent-size switches,
+*Worth a look*, the git state of a checkout, the free-space meter and its
+projection, the review screen's *Save list…* (a download) and *Copy as
+prompt* (the clipboard where the browser allows it, a plain-text tab where
+not), trash or permanent removal with its confirmation, and the measured
+number of what came back. Interface zoom is the browser's own zoom, and the
+page follows `prefers-color-scheme`: Tokyo Night dark, Flexoki light.
 
 On a phone, tablet or touchscreen laptop the same page works by touch: tap
 selects, double-tap opens, a long press marks, one finger pans and a pinch

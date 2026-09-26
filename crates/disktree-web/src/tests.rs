@@ -92,24 +92,24 @@ fn the_full_removal_flow_over_the_state_machine() {
     // The largest entry is selected from the first frame: junk.
     assert_eq!(app.selected, Some(vec![0]));
 
-    app.on_key("space", false, false);
+    app.on_key("space", false, false, false);
     assert_eq!(app.marks.len(), 1);
     assert_eq!(app.marks.items()[0].path, fix.junk);
 
-    app.on_key("c", false, false);
+    app.on_key("c", false, false, false);
     assert_eq!(app.screen, Screen::Review);
     let frame = render::frame(&mut app);
     assert!(frame.html.contains("Review"), "the review screen renders");
     assert!(frame.html.contains("junk"), "the marked row is named");
 
     // The permanent path always asks first.
-    app.on_key("p", false, false);
-    app.on_key("enter", false, false);
+    app.on_key("p", false, false, false);
+    app.on_key("enter", false, false, false);
     assert!(app.confirm_open, "permanent deletion asks first");
     let frame = render::frame(&mut app);
     assert!(frame.html.contains("permanently?"), "the dialog names it");
 
-    app.on_key("enter", false, false);
+    app.on_key("enter", false, false, false);
     assert!(!app.confirm_open);
     assert_eq!(app.screen, Screen::Running);
     settle(&mut app);
@@ -121,7 +121,7 @@ fn the_full_removal_flow_over_the_state_machine() {
     assert!(fix.standalone.exists(), "and so is the loose file");
     assert!(app.marks.is_empty(), "the run clears the marks");
 
-    app.on_key("enter", false, false);
+    app.on_key("enter", false, false, false);
     assert_eq!(app.screen, Screen::Explore);
     settle(&mut app);
     let tree = app.tree().expect("the rescan landed");
@@ -132,8 +132,8 @@ fn the_full_removal_flow_over_the_state_machine() {
 fn trash_mode_is_offered_only_with_a_backend() {
     let fix = fixture();
     let mut app = app_of(&fix);
-    app.on_key("space", false, false);
-    app.on_key("c", false, false);
+    app.on_key("space", false, false, false);
+    app.on_key("c", false, false, false);
     let frame = render::frame(&mut app);
     if app.trash_backend.is_available() {
         assert!(frame.html.contains("Move to trash"));
@@ -147,7 +147,7 @@ fn the_root_itself_cannot_be_marked() {
     let fix = fixture();
     let mut app = app_of(&fix);
     app.selected = Some(Vec::new());
-    app.on_key("space", false, false);
+    app.on_key("space", false, false, false);
     assert!(app.marks.is_empty());
     let (message, _) = app.notice.expect("the refusal says why");
     assert!(message.contains("cannot be removed"), "{message}");
@@ -160,20 +160,20 @@ fn marking_a_parent_absorbs_the_marks_inside_it() {
     // Mark big.bin inside junk, then junk itself: the inner mark is absorbed.
     app.go_to(vec![0]);
     app.select(Some(vec![0, 0]));
-    app.on_key("space", false, false);
+    app.on_key("space", false, false, false);
     assert_eq!(app.marks.len(), 1);
     assert_eq!(app.marks.items()[0].path, fix.junk.join("big.bin"));
 
     app.ascend();
     app.select(Some(vec![0]));
-    app.on_key("space", false, false);
+    app.on_key("space", false, false, false);
     assert_eq!(app.marks.len(), 1, "the parent absorbs the child mark");
     assert_eq!(app.marks.items()[0].path, fix.junk);
 
     // And inside the marked directory there is nothing to mark on its own.
     app.go_to(vec![0]);
     app.select(Some(vec![0, 0]));
-    app.on_key("space", false, false);
+    app.on_key("space", false, false, false);
     let (message, _) = app.notice.expect("the nesting is explained");
     assert!(message.contains("goes with the marked"), "{message}");
     assert_eq!(app.marks.len(), 1);
@@ -242,9 +242,9 @@ fn arrow_keys_move_the_selection_between_siblings() {
     let fix = fixture();
     let mut app = app_of(&fix);
     assert_eq!(app.selected, Some(vec![0]));
-    app.on_key("right", false, false);
+    app.on_key("right", false, false, false);
     assert_eq!(app.selected, Some(vec![1]));
-    app.on_key("left", false, false);
+    app.on_key("left", false, false, false);
     assert_eq!(app.selected, Some(vec![0]));
 }
 
@@ -256,8 +256,8 @@ fn the_sibling_menu_jumps_sideways() {
     assert!(!app.crumbs.is_empty());
     app.open_crumb_menu(&[0], (100.0, 30.0));
     assert!(app.crumb_menu.is_some());
-    app.on_key("down", false, false);
-    app.on_key("enter", false, false);
+    app.on_key("down", false, false, false);
+    app.on_key("enter", false, false, false);
     assert!(app.crumb_menu.is_none(), "choosing closes the menu");
 }
 
@@ -276,8 +276,10 @@ fn the_frame_names_every_screen_and_the_tiles() {
     assert!(frame.title.contains("disktree"));
 
     // A marked tile takes the danger fill, and everything inside it.
-    app.on_key("space", false, false);
-    let marked = crate::palette::css(crate::palette::marked_fill());
+    app.on_key("space", false, false, false);
+    let marked = crate::palette::css(crate::palette::marked_fill(
+        crate::palette::Appearance::Dark,
+    ));
     let frame = render::frame(&mut app);
     assert!(
         frame.html.contains(&marked),
@@ -314,10 +316,107 @@ fn the_touch_bar_offers_the_key_actions() {
     assert!(frame.html.contains("id=\"touch-bar\""));
     assert!(frame.html.contains("Mark"));
     // The largest entry is selected, so Mark is live and Open is offered.
-    app.on_key("space", false, false);
+    app.on_key("space", false, false, false);
     let frame = render::frame(&mut app);
     assert!(frame.html.contains("Unmark"), "the bar follows the mark");
     assert!(frame.html.contains("Review · <b>1</b>"));
+}
+
+#[test]
+fn back_and_forward_walk_the_visited_directories() {
+    let fix = fixture();
+    let mut app = app_of(&fix);
+    // Visit junk, come back to the root, then visit keep: alt-left should
+    // reach the root first, then junk.
+    app.go_to(vec![0]);
+    assert_eq!(app.current_path(), fix.junk);
+    app.go_to(Vec::new());
+    app.go_to(vec![2]);
+    assert_eq!(app.current_path(), fix.keep);
+
+    app.on_key("left", false, false, true);
+    assert_eq!(app.current_path(), fix.root, "back to the root");
+    app.on_key("left", false, false, true);
+    assert_eq!(app.current_path(), fix.junk, "back again reaches junk");
+    app.on_key("right", false, false, true);
+    app.on_key("right", false, false, true);
+    assert_eq!(app.current_path(), fix.keep, "forward undoes both");
+    assert!(!app.can_go_forward(), "the newest visit ends the stack");
+}
+
+#[test]
+fn a_new_departure_clears_the_forward_stack() {
+    let fix = fixture();
+    let mut app = app_of(&fix);
+    app.go_to(vec![0]);
+    app.go_to(Vec::new());
+    assert!(app.can_go_back());
+    app.go_back();
+    assert_eq!(app.current_path(), fix.junk);
+    assert!(app.can_go_forward());
+    // Going somewhere new, not back: forward is gone, as in a browser.
+    app.go_to(vec![2]);
+    assert!(!app.can_go_forward());
+}
+
+#[test]
+fn the_export_routes_serve_the_plan_as_text() {
+    let fix = fixture();
+    let mut app = app_of(&fix);
+    app.toggle_mark(&[0]);
+    let addr = serve_test(app, Some("s3cret"));
+
+    let (status, _) = http(addr, "GET", "/api/export/list", None);
+    assert_eq!(status, 401, "exports carry paths, so they are gated");
+
+    let (status, body) =
+        http(addr, "GET", "/api/export/list?token=s3cret", None);
+    assert_eq!(status, 200);
+    assert!(
+        body.contains(&fix.junk.display().to_string()),
+        "the list names the mark: {body:.200}",
+    );
+
+    let (status, body) =
+        http(addr, "GET", "/api/export/prompt?token=s3cret", None);
+    assert_eq!(status, 200);
+    assert!(
+        body.contains("free up disk space"),
+        "the brief: {body:.200}"
+    );
+    assert!(body.contains(&fix.junk.display().to_string()));
+}
+
+#[test]
+fn the_appearance_follows_the_client() {
+    let fix = fixture();
+    let addr = serve_test(app_of(&fix), None);
+    let dark = "{\"w\":1200,\"h\":700,\"dark\":true,\"events\":[]}";
+    let (_, dark_frame) = http(addr, "POST", "/api/input", Some(dark));
+    let light = "{\"w\":1200,\"h\":700,\"dark\":false,\"events\":[]}";
+    let (_, light_frame) = http(addr, "POST", "/api/input", Some(light));
+    // The frame is JSON: the markup's quotes arrive as `\"`.
+    let tile_fill = |frame: &str| {
+        frame
+            .split("tile-body")
+            .nth(1)
+            .and_then(|rest| rest.split("fill=\\\"").nth(1))
+            .map(|rest| rest.split("\\\"").next().unwrap_or("").to_string())
+    };
+    let (Some(dark_fill), Some(light_fill)) =
+        (tile_fill(&dark_frame), tile_fill(&light_frame))
+    else {
+        panic!("both frames paint a first tile");
+    };
+    assert_ne!(dark_fill, light_fill, "the fills follow the appearance");
+    // And against the palette itself, so a drift there is caught here.
+    let channel = |fill: &str| {
+        u32::from_str_radix(fill.trim_start_matches('#'), 16).unwrap()
+    };
+    assert!(
+        channel(&light_fill) > channel(&dark_fill),
+        "light is lighter: {dark_fill} vs {light_fill}",
+    );
 }
 
 // ── HTTP ────────────────────────────────────────────────────────────────
@@ -638,9 +737,9 @@ fn non_utf8_names_survive_marking_and_unmarking() {
 
     // Mark it (largest = only child) and render the review screen: the
     // mark row's Unmark button carries the path.
-    app.on_key("space", false, false);
+    app.on_key("space", false, false, false);
     assert_eq!(app.marks.len(), 1);
-    app.on_key("c", false, false);
+    app.on_key("c", false, false, false);
     let frame = render::frame(&mut app);
     assert!(frame.html.contains("odd"), "the row renders");
 

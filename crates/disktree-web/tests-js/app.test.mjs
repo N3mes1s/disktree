@@ -21,8 +21,8 @@ const SOURCE = readFileSync(
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Load the shim fresh per test with its own DOM and fetch spy.
-function boot({ search = "", responses } = {}) {
-  const rig = makeContext({ search, responses });
+function boot({ search = "", responses, dark } = {}) {
+  const rig = makeContext({ search, responses, dark });
   vm.createContext(rig.context);
   vm.runInContext(SOURCE, rig.context);
   return { ...rig, shim: rig.context };
@@ -202,6 +202,49 @@ test("typing posts the debounced full text; escape clears", async () => {
     .filter((c) => c.body && c.body.includes("find_clear"))
     .map((c) => JSON.parse(c.body).events[0].type);
   assert.deepEqual(clears, ["find_clear"]);
+});
+
+test("alt-arrows go to history with alt set, and never to the browser", async () => {
+  const { document, calls } = boot();
+  document._fire("keydown", {
+    key: "ArrowLeft", target: document.body, altKey: true, ...noDefault(),
+  });
+  document._fire("keydown", {
+    key: "ArrowRight", target: document.body, altKey: true, ...noDefault(),
+  });
+  await wait(0);
+  const keys = calls
+    .filter((c) => c.body && c.body.includes('"key"'))
+    .map((c) => JSON.parse(c.body).events[0]);
+  assert.deepEqual(keys.map((k) => [k.key, k.alt]), [["left", true], ["right", true]]);
+});
+
+test("every input batch carries the appearance", async () => {
+  const { context, calls } = boot({ dark: false }); // a light system
+  await context.send([{ type: "key", key: "0" }]);
+  const last = JSON.parse(calls.at(-1).body);
+  assert.equal(last.dark, false);
+});
+
+test("on the review screen s/a hit the export controls, not the server", async () => {
+  const { document, context, calls } = boot();
+  const posts = () => calls.filter((c) => c.body).length;
+  await context.apply({
+    html: '<a id="export-list" href="/api/export/list"></a>',
+    title: "t", busy: false, find_open: false, find: "", screen: "review",
+  });
+  const before = posts();
+  document._fire("keydown", { key: "s", target: document.body, ...noDefault() });
+  await wait(0);
+  assert.equal(posts(), before, "no post: the shim answered it");
+  // And off the review screen, s is just a key again.
+  await context.apply({
+    html: "<div></div>",
+    title: "t", busy: false, find_open: false, find: "", screen: "explore",
+  });
+  document._fire("keydown", { key: "s", target: document.body, ...noDefault() });
+  await wait(0);
+  assert.equal(posts(), before + 1);
 });
 
 test("a stale answer is dropped in favour of the newer one", async () => {

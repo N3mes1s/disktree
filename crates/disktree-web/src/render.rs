@@ -31,6 +31,9 @@ pub struct Frame {
     /// The find field's state, so the shim can keep its focus and text.
     pub find_open: bool,
     pub find: String,
+    /// Which screen this is, so the shim can route the review screen's own
+    /// keys (downloads and the clipboard are client-side things).
+    pub screen: &'static str,
 }
 
 /// One frame of the whole application.
@@ -51,6 +54,12 @@ pub fn frame(app: &mut Web) -> Frame {
     }
     Frame {
         html,
+        screen: match app.screen {
+            Screen::Explore => "explore",
+            Screen::Review => "review",
+            Screen::Running => "running",
+            Screen::Done => "done",
+        },
         title: format!(
             "disktree · {}",
             disktree_core::marks::display_path(
@@ -199,14 +208,14 @@ fn touch_bar(app: &Web) -> String {
 fn top_bar(app: &Web) -> String {
     format!(
         "<div id=\"top-bar\">{logo}{trail}<div class=\"flex-1\"></div>{settings}</div>",
-        logo = logo(),
+        logo = logo(app.appearance),
         trail = trail(app),
         settings = view_settings(app),
     )
 }
 
 /// Four tiles in category colours, and the name.
-fn logo() -> String {
+fn logo(appearance: crate::palette::Appearance) -> String {
     let tiles = [
         Category::Code,
         Category::Git,
@@ -218,7 +227,7 @@ fn logo() -> String {
         let _ = write!(
             out,
             "<span class=\"logo-tile\" style=\"background:{}\"></span>",
-            palette::css(palette::category_accent(category))
+            palette::css(palette::category_accent(appearance, category))
         );
         out
     });
@@ -367,10 +376,16 @@ fn crumb_menu_layer(app: &Web) -> String {
                 "parent": crumbs_json(&menu.parent),
                 "index": row.index,
             })),
-            palette::css(palette::category_accent(row.category)),
+            palette::css(palette::category_accent(
+                app.appearance,
+                row.category
+            )),
             esc(&row.name),
             share(row.value, largest).clamp(2.0, 100.0),
-            palette::css(palette::category_accent(row.category)),
+            palette::css(palette::category_accent(
+                app.appearance,
+                row.category
+            )),
         );
     }
     if more > 0 {
@@ -387,6 +402,50 @@ fn crumb_menu_layer(app: &Web) -> String {
 /// What is measured, on the edge that owns it: the Size | Files | Age
 /// choice, the scan's Hidden and Apparent switches, and the drawn depth.
 fn view_settings(app: &Web) -> String {
+    // `<` and `>` lead the controls: the directories visited, back and
+    // forward, like the browser's own but inside the tree.
+    let history_buttons = {
+        let button = |back: bool| {
+            let (enabled, label, name, arrow) = if back {
+                (app.can_go_back(), "‹", "Back", "left")
+            } else {
+                (app.can_go_forward(), "›", "Forward", "right")
+            };
+            let hint = app
+                .history_target(back)
+                .and_then(|(_, crumbs)| app.path_at(&crumbs))
+                .map(|path| {
+                    disktree_core::marks::display_path(
+                        &path,
+                        app.home.as_deref(),
+                    )
+                })
+                .map_or_else(
+                    || {
+                        format!(
+                            "{name} — alt {arrow}",
+                            arrow = if back { "←" } else { "→" }
+                        )
+                    },
+                    |path| format!("{name} to {path}"),
+                );
+            format!(
+                "<button class=\"seg\" {} title=\"{}\" {}>{label}</button>",
+                if enabled { "" } else { "disabled" },
+                esc(&hint),
+                ev(&serde_json::json!({
+                    "type": "key",
+                    "key": arrow,
+                    "alt": true,
+                })),
+            )
+        };
+        format!(
+            "<span class=\"group\">{}{}</span>",
+            button(true),
+            button(false)
+        )
+    };
     let mode = app.mode_index();
     let mut modes = String::new();
     for (index, label) in ["Size", "Files", "Age"].iter().enumerate() {
@@ -399,7 +458,7 @@ fn view_settings(app: &Web) -> String {
     }
     let depth = app.layout_options.max_depth;
     format!(
-        "<div id=\"settings\">\
+        "<div id=\"settings\">{history_buttons}\
          <span class=\"group\">{modes}</span>\
          <button class=\"check{}\" {} title=\"include dotfiles (i)\">\
          <span class=\"box\"></span>Hidden files</button>\
@@ -477,19 +536,29 @@ fn legend(app: &Web) -> String {
     if app.color_mode == ColorMode::Age {
         for (bucket, (_, label)) in palette::AGE_BUCKETS.iter().enumerate() {
             lane.push_str(&item(
-                swatch(palette::css(palette::age_accent(bucket))),
+                swatch(palette::css(palette::age_accent(
+                    app.appearance,
+                    bucket,
+                ))),
                 label,
             ));
         }
     } else {
         for category in Category::LEGEND {
             lane.push_str(&item(
-                swatch(palette::css(palette::category_accent(category))),
+                swatch(palette::css(palette::category_accent(
+                    app.appearance,
+                    category,
+                ))),
                 category.label(),
             ));
         }
     }
-    let ground = palette::css(palette::category_fill(Category::Other, 0));
+    let ground = palette::css(palette::category_fill(
+        app.appearance,
+        Category::Other,
+        0,
+    ));
     let hatch = format!(
         "<span class=\"swatch hatch-swatch\" style=\"background-color:{ground}\"></span>"
     );
@@ -584,7 +653,7 @@ fn selection_section(app: &Web) -> String {
          <div class=\"name-row\"><span class=\"strip\" style=\"background:{}\"></span>\
          <span class=\"name\" title=\"{}\">{}</span></div>\
          <div class=\"caption dim ellipsis\">{}</div></div>",
-        palette::css(palette::category_accent(node.category)),
+        palette::css(palette::category_accent(app.appearance, node.category)),
         esc(&node.name),
         esc(&node.name),
         path.as_deref().map_or_else(String::new, |path| {
@@ -744,7 +813,10 @@ fn worth_section(app: &Web) -> String {
             continue;
         };
         let (title, detail) = insight_text(app, candidate);
-        let accent = palette::css(palette::category_accent(node.category));
+        let accent = palette::css(palette::category_accent(
+            app.appearance,
+            node.category,
+        ));
         let active = selected.as_deref() == Some(candidate.crumbs.as_slice());
         let _ = write!(
             section,
@@ -840,7 +912,7 @@ fn marked_section(app: &Web) -> String {
              <span class=\"ellipsis flex-1\" title=\"{}\">{}</span>\
              <span class=\"dim\">{}</span>\
              <span class=\"unmark\" {} title=\"unmark\">×</span></div>",
-            palette::css(palette::category_accent(category)),
+            palette::css(palette::category_accent(app.appearance, category)),
             esc(&item.path.display().to_string()),
             esc(&disktree_core::marks::display_path(
                 &item.path,
@@ -1235,9 +1307,28 @@ fn review_summary(app: &Web, plan: &disktree_core::removal::Plan) -> String {
     }
 
     panel.push_str("<div class=\"flex-1\"></div>");
+    panel.push_str(&export_controls(plan));
     panel.push_str(&commit_controls(app, plan));
     panel.push_str("</div>");
     panel
+}
+
+/// The marked list, handed on instead of acted on: saved as a plain list of
+/// paths, or written up as a prompt for a coding agent. The list downloads
+/// straight from its route; the prompt is copied by the shim, with a new tab
+/// as the fallback where the clipboard API wants a secure context.
+fn export_controls(plan: &disktree_core::removal::Plan) -> String {
+    let class = if plan.is_empty() {
+        "btn secondary flex-1 disabled"
+    } else {
+        "btn secondary flex-1"
+    };
+    format!(
+        "<div class=\"actions\">\
+         <a class=\"{class}\" id=\"export-list\" data-authed \
+         href=\"/api/export/list\" download>Save list…</a>\
+         <button class=\"{class}\" id=\"copy-prompt\">Copy as prompt</button></div>",
+    )
 }
 
 /// The screen's one commitment. Moving to the trash is the default commit,
@@ -1278,6 +1369,8 @@ fn review_footer(app: &Web) -> String {
          <span class=\"hint\"><span class=\"keycap\">m</span> trash</span>\
          <span class=\"hint\"><span class=\"keycap\">p</span> permanent</span>\
          <span class=\"hint\"><span class=\"keycap\">!</span> unmark all</span>\
+         <span class=\"hint\"><span class=\"keycap\">s</span> save list</span>\
+         <span class=\"hint\"><span class=\"keycap\">a</span> copy as prompt</span>\
          <span class=\"hint\"><span class=\"keycap\">esc</span> back</span>\
          <div class=\"flex-1\"></div>\
          <span class=\"caption dim\">{} available</span></div>",
@@ -1494,7 +1587,7 @@ fn delete_dialog(app: &Web) -> String {
 fn help_overlay(app: &Web) -> String {
     // Sentence case, and the tile a key acts on is always the one under the
     // pointer if the pointer moved last, else the keyboard selection.
-    let rows: [(&str, &str); 23] = [
+    let rows: [(&str, &str); 24] = [
         ("space / x", "Mark or unmark the tile you point at"),
         ("ctrl-click", "Mark without moving the selection"),
         ("enter", "Open that directory, at any depth"),
@@ -1502,6 +1595,7 @@ fn help_overlay(app: &Web) -> String {
         ("← ↑ ↓ →", "Move between tiles at this level"),
         ("tab", "Next largest sibling"),
         ("scroll", "Zoom toward a directory, then go into it"),
+        ("alt ← / →", "Back and forward through visited directories"),
         ("shift-scroll", "Pan the magnified view"),
         ("[ / ]", "Draw fewer or more levels at once"),
         ("- / = / 0", "Magnify, shrink, or reset the view"),
@@ -1521,7 +1615,10 @@ fn help_overlay(app: &Web) -> String {
         ("i", "Include or skip hidden entries"),
         ("p", "Show or hide the selection line"),
         ("", ""),
-        ("Review screen", "m trash · p permanent · ! unmark all"),
+        (
+            "Review screen",
+            "m trash · p permanent · ! unmark all · s save list · a copy as prompt",
+        ),
         ("", "enter commits · esc goes back"),
         ("", "A permanent deletion always asks first"),
     ];
